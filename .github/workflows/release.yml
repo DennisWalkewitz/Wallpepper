@@ -82,7 +82,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          flags=""
-          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" out/Wallpepper.exe out/wallpepper-linux-x64.tar.gz out/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --title "Wallpepper ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag $flags
+          # the release may already exist when the tag was made with "Draft a new release" on GitHub
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" out/Wallpepper.exe out/wallpepper-linux-x64.tar.gz out/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            flags=""
+            case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+            gh release create "$GITHUB_REF_NAME" out/Wallpepper.exe out/wallpepper-linux-x64.tar.gz out/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --title "Wallpepper ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag $flags
+          fi
