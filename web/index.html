@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:">
+<meta name="description" content="A path tracing benchmark for your graphics card that runs in the browser.">
+<title>Wallpepper GPU benchmark</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230e1218'/%3E%3Crect x='2' y='2' width='5' height='5' fill='%23f0a843'/%3E%3Crect x='9' y='2' width='5' height='5' fill='%232b3444'/%3E%3Crect x='2' y='9' width='5' height='5' fill='%232b3444'/%3E%3Crect x='9' y='9' width='5' height='5' fill='%23f0a843'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Wallpepper GPU benchmark</h1>
+    <p class="lede">A path tracer with a fixed workload, run on your graphics card by this browser.
+      It draws the scene below at 3840 × 2160 for about ten seconds and turns the speed into a score.</p>
+  </header>
+
+  <figure class="scene">
+    <canvas id="scene" width="960" height="540" role="img" aria-label="The benchmark scene: spheres and tall slabs in haze, lit by a lamp"></canvas>
+    <figcaption id="placeholder">The scene appears here, tile by tile, once the benchmark runs.</figcaption>
+  </figure>
+  <progress id="progress" max="1" value="0" aria-label="Benchmark progress"></progress>
+
+  <div class="controls">
+    <button id="run-full" class="primary" disabled>Run benchmark</button>
+    <button id="run-quick" disabled>Quick run</button>
+    <button id="stop" hidden>Stop</button>
+    <p id="status" role="status">Starting…</p>
+  </div>
+  <p class="hint">Quick run draws 1280 × 720 for about five seconds. A run ends after 600 frames at the latest, and
+    never before three: phones and integrated graphics need a while for the full benchmark.</p>
+
+  <section id="result" hidden aria-live="polite">
+    <p class="score"><output id="score"></output> <span id="label"></span></p>
+    <ul id="warnings"></ul>
+    <dl>
+      <dt>Speed</dt><dd id="speed"></dd>
+      <dt>Frames</dt><dd id="frames"></dd>
+      <dt>Frame time</dt><dd id="frame-time"></dd>
+      <dt>Graphics card</dt><dd id="gpu"></dd>
+      <dt>Graphics interface</dt><dd id="api"></dd>
+      <dt>Browser</dt><dd id="browser"></dd>
+    </dl>
+    <pre id="json" tabindex="0"></pre>
+    <button id="copy">Copy result (JSON)</button>
+  </section>
+
+  <section class="notes">
+    <h2>Reading the score</h2>
+    <p>The score is the number of megapixels drawn per second, scaled so that 10000 stands for 60 frames per
+      second at 3840 × 2160. That is the estimate for an NVIDIA RTX 5090; until a real one has been measured,
+      every score is labelled provisional.</p>
+    <p>A browser adds work of its own between the page and the graphics card (in most browsers a translation
+      layer called ANGLE). Scores from this page are therefore close to, but not strictly comparable with, the
+      scores of the Wallpepper apps for Windows and Linux, which run the same workload without a browser.</p>
+    <p>Close other tabs and programs that use the graphics card, and keep this tab in front while it runs.</p>
+  </section>
+
+  <details id="details">
+    <summary>Details</summary>
+    <pre id="log"></pre>
+  </details>
+
+  <footer>
+    <a href="gallery.html">Shader gallery</a>
+    <a href="https://github.com/DennisWalkewitz/Wallpepper/blob/main/docs/BENCHMARK.md">How the benchmark works</a>
+    <a href="https://github.com/DennisWalkewitz/Wallpepper">Wallpepper on GitHub</a>
+  </footer>
+</main>
+<script src="wallpepper.js"></script>
+<script src="benchmark.js"></script>
+</body>
+</html>

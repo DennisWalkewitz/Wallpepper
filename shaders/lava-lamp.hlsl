@@ -1,0 +1,109 @@
+// @name: Lava Lamp
+// @tags: calming, retro, abstract
+// Warm blobs of wax slowly rise, merge and sink (smooth metaballs) inside glowing liquid.
+
+Texture2D shaderTexture;
+SamplerState samplerState;
+cbuffer PixelShaderSettings {
+    float  Time;
+    float  Scale;
+    float2 Resolution;
+    float4 Background;
+};
+
+#define BLOB_COUNT 9          // number of wax blobs (2..14)
+#define BLOB_SIZE 1.0         // blob size
+#define RISE_SPEED 1.0        // how fast blobs travel
+#define STICKINESS 1.0        // how readily blobs merge
+#define WOBBLE 1.0            // sideways drift
+#define WAX_R 1.00            // wax colour: red
+#define WAX_G 0.30            // wax colour: green
+#define WAX_B 0.10            // wax colour: blue
+#define WAX_HOT_R 1.00        // wax colour near the lamp (bottom): red
+#define WAX_HOT_G 0.80        // wax colour near the lamp (bottom): green
+#define WAX_HOT_B 0.25        // wax colour near the lamp (bottom): blue
+#define LIQUID_R 0.16         // liquid colour: red
+#define LIQUID_G 0.03         // liquid colour: green
+#define LIQUID_B 0.22         // liquid colour: blue
+#define GLOW 1.0              // glow around the wax
+#define SHINE 0.6             // glossy highlight on the wax
+#define HUE_CYCLE 0.0         // hue rotations per minute (0 = fixed colours)
+#define BRIGHTNESS 1.0        // overall brightness
+#define TEXT_VEIL 0.5         // darkening behind terminal text
+
+float hash11(float p) { p = frac(p * 0.1031); p *= p + 33.33; p *= p + p; return frac(p); }
+
+float hash12(float2 p)
+{
+    float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+
+float3 hueRotate(float3 c, float turns)
+{
+    float a = turns * 6.2831853;
+    float3 k = float3(0.57735, 0.57735, 0.57735);
+    return c * cos(a) + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - cos(a));
+}
+
+// metaball field and its gradient
+float3 field(float2 p, float aspect, float t)
+{
+    float f = 0.0;
+    float2 grad = float2(0.0, 0.0);
+    for (int i = 0; i < BLOB_COUNT; i++)
+    {
+        float fi = float(i);
+        float sp = (0.02 + 0.03 * hash11(fi * 3.1)) * RISE_SPEED;
+        float ph = hash11(fi * 7.7) * 6.2831853;
+        float y = 0.5 + 0.62 * sin(t * sp * 6.2831853 + ph);              // rises and sinks
+        float x = (0.12 + 0.76 * hash11(fi * 5.3)) * aspect + 0.08 * WOBBLE * sin(t * 0.13 * (1.0 + hash11(fi)) + fi * 2.0);
+        float r = 0.085 * BLOB_SIZE * (0.6 + 0.9 * hash11(fi * 2.9));
+        float2 d = p - float2(x, y);
+        float d2 = dot(d, d) + 1e-5;
+        float w = r * r / d2;
+        f += w;
+        grad += -2.0 * w / d2 * d;
+    }
+    // pools of wax at the bottom and top
+    f += 0.012 * STICKINESS / max(1.02 - p.y, 0.012) + 0.008 * STICKINESS / max(p.y + 0.02, 0.012);
+    return float3(f, grad);
+}
+
+float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+{
+    float aspect = Resolution.x / Resolution.y;
+    float2 p = float2(tex.x * aspect, tex.y);
+    float t = Time;
+
+    float3 fld = field(p, aspect, t);
+    float thr = 1.0 / max(STICKINESS, 0.2);
+    float inside = smoothstep(thr * 0.96, thr * 1.04, fld.x);
+
+    float3 liquid = float3(LIQUID_R, LIQUID_G, LIQUID_B);
+    float3 wax = lerp(float3(WAX_R, WAX_G, WAX_B), float3(WAX_HOT_R, WAX_HOT_G, WAX_HOT_B), smoothstep(0.35, 1.0, tex.y));
+    float3 col = liquid * (0.55 + 0.9 * tex.y);                           // lit from below
+    col += wax * saturate(fld.x / thr) * saturate(fld.x / thr) * 0.35 * GLOW * (1.0 - inside);
+
+    // wax shading from the field gradient (fake normal)
+    float2 n = normalize(fld.yz + float2(1e-5, 0.0));
+    float edge = saturate((fld.x - thr) / thr);
+    float shade = 0.72 + 0.28 * saturate(edge * 2.0) + 0.12 * dot(n, float2(0.0, 1.0));
+    float3 waxCol = wax * shade;
+    waxCol += float3(1.0, 0.95, 0.85) * pow(saturate(dot(n, normalize(float2(-0.5, -0.8))) * (1.0 - edge)), 6.0) * SHINE * 0.5;
+    col = lerp(col, waxCol, inside);
+
+    if (HUE_CYCLE != 0.0) col = hueRotate(col, HUE_CYCLE * Time / 60.0);
+    col *= BRIGHTNESS;
+    float2 vc = tex - 0.5;
+    col *= 1.0 - dot(vc, vc) * 0.7;
+
+    float4 fg = shaderTexture.Sample(samplerState, tex);
+    float2 o = 2.0 * Scale / Resolution;
+    float cover = max(fg.a, max(shaderTexture.Sample(samplerState, tex + o).a, shaderTexture.Sample(samplerState, tex - o).a));
+    col *= 1.0 - TEXT_VEIL * cover;
+    col = col * (1.0 - fg.a) + fg.rgb;
+    col += (hash12(tex * Resolution) - 0.5) / 255.0;
+    return float4(saturate(col), 1.0);
+}

@@ -1,0 +1,88 @@
+name: release
+
+# Pushing a tag like v0.3.0 builds both platforms and publishes a GitHub release.
+# The Windows app updates itself from these releases: it downloads Wallpepper.exe and checks it against SHA256SUMS.txt.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    # The updater compares the release tag with the version built into the app, so the three must agree.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag, Wallpepper.csproj and CMakeLists.txt carry the same version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          app="$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' windows/Wallpepper.csproj)"
+          cli="$(sed -n 's/^project(wallpepper VERSION \([0-9.]*\).*/\1/p' linux/CMakeLists.txt)"
+          echo "tag $tag, windows $app, linux $cli"
+          test -n "$tag" && test "$tag" = "$app" && test "$tag" = "$cli"
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish
+        run: dotnet publish windows/Wallpepper.csproj -c Release -o dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/Wallpepper.exe
+
+  linux:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libx11-dev libxrandr-dev xvfb libegl1 libgl1 libgles2 libgl1-mesa-dri
+      - name: Build and test
+        run: bash linux/tests/run.sh
+      - name: Package
+        run: |
+          cmake -S linux -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+          cmake --install build --prefix stage/wallpepper
+          cp LICENSE THIRD-PARTY-NOTICES.md docs/LINUX.md stage/wallpepper/
+          tar -C stage -czf wallpepper-linux-x64.tar.gz wallpepper
+      - name: The archive works on its own
+        run: |
+          mkdir unpacked && tar -C unpacked -xzf wallpepper-linux-x64.tar.gz
+          unpacked/wallpepper/bin/wallpepper list | tail -n 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: wallpepper-linux-x64.tar.gz
+
+  publish:
+    needs: [windows, linux]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: out
+      - name: Checksums
+        run: cd out && sha256sum Wallpepper.exe wallpepper-linux-x64.tar.gz > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" out/Wallpepper.exe out/wallpepper-linux-x64.tar.gz out/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --title "Wallpepper ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag $flags

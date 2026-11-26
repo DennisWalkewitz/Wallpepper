@@ -1,0 +1,1378 @@
+// @name: Path Tracer: Moonlit Courtyard
+// @tags: 3d, tech, featured, calming
+// @light: SAMPLES=1, BOUNCES=2, MIST_DEPTH=1, LANTERNS_FLOATING=2, LANTERNS_HANGING=2, GLASS_FLOATS=0
+// A walled courtyard at night, path traced from scratch every frame: a dark reflecting pool with slow rings and
+// a light breeze on it, paper lanterns drifting on the water and swaying under the colonnades, a bronze ring
+// around a glass orb, and cold moonlight that falls through the round moon gate and the lattice windows of
+// the far wall into thin mist.
+
+Texture2D shaderTexture;
+SamplerState samplerState;
+cbuffer PixelShaderSettings {
+    float  Time;
+    float  Scale;
+    float2 Resolution;
+    float4 Background;
+};
+
+#define SAMPLES 4               // paths per pixel (1..16): more = less grain, each costs the same again; try 2 on weaker graphics cards
+#define BOUNCES 3               // how often light may bounce (1..8): more = richer reflections and glass, slower
+#define MIST_DEPTH 2            // mist in reflections (0..8): 1 = only in front of the camera (faster), 2 = also in the water and the glass
+#define GRAIN_ANIMATE 1         // 1 = grain changes every frame (looks smoother), 0 = grain stands still
+#define FIREFLY_CLAMP 2.0       // limit for very bright bounced light (0.5..20): lower = calmer image, higher = more sparkle
+#define ANIMATION_SPEED 1.0     // overall speed of everything that moves (0..3)
+#define CAMERA_ANGLE 0.09       // where the camera stands, left or right of the pool's axis (-0.45..0.45)
+#define CAMERA_SWAY 0.5         // how far the camera slowly wanders left and right (0..1)
+#define CAMERA_DISTANCE 12.0    // distance of the camera from the sculpture (9.5..15.5)
+#define CAMERA_HEIGHT 1.1       // height of the camera above the paving (0.35..4)
+#define CAMERA_LOOK 1.9         // height of the point the camera looks at (0..4): higher = more sky, lower = more water
+#define FIELD_OF_VIEW 44.0      // vertical field of view in degrees (15..100)
+#define APERTURE 0.05           // lens opening (0..0.4): 0 = everything sharp, larger = stronger blur away from the focus
+#define FOCUS_DISTANCE 0.0      // distance that is in focus (0..30, 0 = always on the sculpture)
+#define MOON 1.0                // brightness of the moonlight (0..3)
+#define MOON_HEIGHT 12.5        // how high the moon stands in the sky, in degrees (4..80): low = long beams through the gate
+#define MOON_DIRECTION -0.15    // where the moon stands (-1.2..1.2): 0 = straight behind the moon gate, negative = further left
+#define MOON_SIZE 1.2           // size of the moon (0.3..8): larger = softer shadows and a bigger disc in the sky
+#define MOON_R 0.56             // moonlight colour: red
+#define MOON_G 0.72             // moonlight colour: green
+#define MOON_B 1.00             // moonlight colour: blue
+#define SKY 1.0                 // glow of the night sky (0..3)
+#define STARS 1.0               // brightness of the stars (0..3)
+#define MIST 1.0                // mist in the air that makes the moonlight visible (0..4, 0 = clear air, faster)
+#define MIST_HEIGHT 2.5         // how high the mist reaches (0.5..30): low = a layer over the ground, high = even haze
+#define LANTERNS_FLOATING 3     // paper lanterns drifting on the pool (0..5, each one costs a little)
+#define LANTERNS_HANGING 2      // paper lanterns hanging under the colonnades (0..4, each one costs a little)
+#define LANTERN_BRIGHTNESS 1.0  // brightness of the lanterns (0..3)
+#define LANTERN_R 1.00          // lantern colour: red
+#define LANTERN_G 0.42          // lantern colour: green
+#define LANTERN_B 0.10          // lantern colour: blue
+#define LANTERN_VARIETY 0.5     // how much the lanterns differ in colour (0..1)
+#define LANTERN_DRIFT 0.6       // how far the floating lanterns wander over the water (0..1)
+#define LANTERN_SWAY 0.5        // how far the hanging lanterns swing (0..1)
+#define LANTERN_RAYS 0          // 1 = a shadow ray towards every lantern at every bounce (cleanest lantern shadows, slower), 0 = towards the one that matters most
+#define RIPPLE_STRENGTH 1.0     // strength of the breeze on the water (0..3): 0 = a perfect mirror
+#define RIPPLE_RINGS 1.0        // strength of the slow rings that spread over the pool (0..3)
+#define RIPPLE_SCALE 1.0        // size of the ripples (0.3..3): larger = longer, lazier waves
+#define RIPPLE_SPEED 1.0        // how fast the ripples travel (0..3)
+#define WATER_R 0.10            // colour of the water: red
+#define WATER_G 0.42            // colour of the water: green
+#define WATER_B 0.46            // colour of the water: blue
+#define WATER_DEPTH 1.2         // depth of the pool (0..4): 0 = a film of water over pale tiles, deeper = darker
+#define CAUSTICS 1.0            // dancing lines of light on the bottom of the pool (0..2)
+#define FLOOR_WETNESS 0.7       // how wet the paving is (0..1): 0 = dry matte stone, 1 = standing water everywhere
+#define STONE_R 0.42            // paving and column stone colour: red
+#define STONE_G 0.40            // paving and column stone colour: green
+#define STONE_B 0.37            // paving and column stone colour: blue
+#define WALL_R 0.62             // plaster colour of the walls: red
+#define WALL_G 0.60             // plaster colour of the walls: green
+#define WALL_B 0.56             // plaster colour of the walls: blue
+#define COLUMNS 5               // columns on each side of the courtyard (2..8, each one costs a little)
+#define SCULPTURE_R 0.90        // metal colour of the ring: red
+#define SCULPTURE_G 0.52        // metal colour of the ring: green
+#define SCULPTURE_B 0.22        // metal colour of the ring: blue
+#define RING_TURN 0.5           // how far the ring is turned out of the pool's axis (-1.57..1.57, 0 = facing the gate)
+#define RING_SPIN 0.0           // how fast the ring keeps turning on its block (-0.5..0.5, 0 = it stands still)
+#define SCULPTURE_ROUGHNESS 0.2 // finish of the ring (0..1): 0 = polished mirror, 1 = matte
+#define ORB_SIZE 0.45           // size of the glass orb inside the ring (0..1, 0 = no orb)
+#define GLASS_FLOATS 2          // glass balls drifting on the pool (0..3)
+#define GLASS_R 0.78            // glass tint: red
+#define GLASS_G 0.94            // glass tint: green
+#define GLASS_B 0.90            // glass tint: blue
+#define GLASS_IOR 1.5           // how strongly the glass bends light (1..2.5): 1.5 = glass, 2.4 = diamond
+#define EXPOSURE 1.0            // overall brightness (0.2..4)
+#define VIGNETTE 0.4            // darkening towards the corners (0..1)
+#define TEXT_VEIL 0.5           // darkening behind terminal text (0..1)
+
+// The courtyard (metres, y up, the camera looks along -z): paving at y = 0 between the side walls x = +-8.6 and
+// the back wall z = -13 .. -13.6, all 4.6 high; behind the camera it is open. Moon gate: round opening of radius 2
+// around (0, 2.5) in the back wall. Pool: water at y = 0.12 for |x| < 3, -7.5 < z < 9.5, inside a stone rim
+// 0.45 wide and 0.2 high. Colonnades: columns at x = +-4.95 on a low step, carrying a beam and a roof slab that
+// reaches back to the side walls. Sculpture: a ring of radius 1.36 standing on a block in the pool at z = -1.
+// Object numbers: 0 paving / ground, 1 water, 2 pool rim, 4 walls, 7 columns, 8 roof and beam, 9 step,
+// 10 block, 11 ring, 12 glass orb, 13 glass floats, 15 sky, 20.. lanterns.
+
+// ---- random numbers ---------------------------------------------------------------------------------------
+float hash12(float2 p)
+{
+    float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+
+// Two rounds of mixing: with a single round the random numbers of different decisions are related to each other
+// in a regular way, which shows up as a faint woven pattern in smooth areas.
+float2 hash23(float3 p)
+{
+    float3 q = frac(p * float3(0.1031, 0.1030, 0.0973));
+    q += dot(q, q.yxz + 33.33);
+    q = frac((q.xxy + q.yxx) * q.zyx);
+    q += dot(q, q.yzx + 33.33);
+    return frac((q.xx + q.yz) * q.zy);
+}
+
+// Two random numbers for one decision (dim) of one path. Every pixel gets its own random shift per decision and
+// per frame; on top of that the paths of a pixel are spread evenly (the first number in equal steps, the second
+// by the golden ratio), so that even a handful of paths per pixel covers every choice fairly.
+float2 rnd2(float2 pix, float dim, float sIdx, float tseed)
+{
+    float2 h = hash23(float3(pix.x, pix.y, dim * 7.0 + tseed));
+    return frac(h + sIdx * float2(1.0 / float(SAMPLES), 0.6180340));
+}
+
+float lum(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
+
+void basis(float3 n, out float3 t1, out float3 t2)
+{
+    float3 up = abs(n.y) < 0.9 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+    t1 = normalize(cross(up, n));
+    t2 = cross(n, t1);
+}
+
+// ---- ray / primitive intersections ------------------------------------------------------------------------
+// nearest hit in front of the ray origin (also from inside the sphere), or -1
+float iSphere(float3 ro, float3 rd, float3 c, float r)
+{
+    float3 oc = ro - c;
+    float b = dot(oc, rd);
+    float h = b * b - dot(oc, oc) + r * r;
+    float t = -1.0;
+    if (h > 0.0)
+    {
+        h = sqrt(h);
+        t = -b - h;
+        if (t < 0.0005) t = -b + h;
+        if (t < 0.0005) t = -1.0;
+    }
+    return t;
+}
+
+// box of half size hs around the origin, seen from outside: entry distance or -1, and the face normal
+float iBox(float3 ro, float3 rd, float3 hs, out float3 n)
+{
+    float3 sg = float3(rd.x < 0.0 ? -1.0 : 1.0, rd.y < 0.0 ? -1.0 : 1.0, rd.z < 0.0 ? -1.0 : 1.0);
+    float3 m = sg / max(abs(rd), float3(1e-7, 1e-7, 1e-7));
+    float3 k = abs(m) * hs;
+    float3 t1 = -ro * m - k;
+    float3 t2 = -ro * m + k;
+    float tN = max(max(t1.x, t1.y), t1.z);
+    float tF = min(min(t2.x, t2.y), t2.z);
+    float nx = step(t1.y, t1.x) * step(t1.z, t1.x);
+    float ny = (1.0 - nx) * step(t1.z, t1.y);
+    n = -sg * float3(nx, ny, 1.0 - nx - ny);
+    return (tN < tF && tN > 0.0005) ? tN : -1.0;
+}
+
+// the same box as a yes / no question: 1 if the ray enters it before tmax
+float boxBlocks(float3 ro, float3 rd, float3 hs, float tmax)
+{
+    float3 m = float3(1.0, 1.0, 1.0) / max(abs(rd), float3(1e-7, 1e-7, 1e-7));
+    float3 sg = float3(rd.x < 0.0 ? -1.0 : 1.0, rd.y < 0.0 ? -1.0 : 1.0, rd.z < 0.0 ? -1.0 : 1.0);
+    float3 mid = -ro * sg * m;
+    float3 t1 = mid - m * hs;
+    float3 t2 = mid + m * hs;
+    float tN = max(max(t1.x, t1.y), t1.z);
+    float tF = min(min(t2.x, t2.y), t2.z);
+    return (tN < tF && tN > 0.0005 && tN < tmax) ? 1.0 : 0.0;
+}
+
+// where a ray leaves the rectangle of half size hs (seen from above), or -1 if it never crosses it;
+// nrm = the side it leaves through, pointing back in
+float rectExit(float2 o, float2 d, float2 hs, out float2 nrm)
+{
+    float2 sg = float2(d.x < 0.0 ? -1.0 : 1.0, d.y < 0.0 ? -1.0 : 1.0);
+    float2 m = float2(1.0, 1.0) / max(abs(d), float2(1e-7, 1e-7));
+    float2 mid = -o * sg * m;
+    float2 tA = mid - m * hs;
+    float2 tB = mid + m * hs;
+    float tN = max(tA.x, tA.y);
+    float tF = min(tB.x, tB.y);
+    nrm = tB.x < tB.y ? float2(-sg.x, 0.0) : float2(0.0, -sg.y);
+    return (tN < tF && tF > 0.0005) ? tF : -1.0;
+}
+
+// upright column of radius r around the vertical through c, between the heights y0 and y1, seen from outside
+float iColumn(float3 ro, float3 rd, float2 c, float r, float y0, float y1)
+{
+    float2 oc = ro.xz - c;
+    float a = max(dot(rd.xz, rd.xz), 1e-9);
+    float b = dot(oc, rd.xz);
+    float h = b * b - a * (dot(oc, oc) - r * r);
+    float t = (-b - sqrt(max(h, 0.0))) / a;
+    float y = ro.y + rd.y * t;
+    return (h > 0.0 && t > 0.0005 && y > y0 && y < y1) ? t : -1.0;
+}
+
+// The sculpture: a flat ring (a short piece of thick tube) standing upright, its axis along z.
+// o = ray origin relative to the middle of the ring. Outer radius 1.36, inner 1.1, 0.4 deep.
+float iRing(float3 o, float3 rd, out float3 n)
+{
+    float t = 1e5;
+    n = float3(0.0, 0.0, 1.0);
+    float a = max(dot(rd.xy, rd.xy), 1e-9);
+    float b = dot(o.xy, rd.xy);
+    float cc = dot(o.xy, o.xy);
+    // outside of the tube
+    float h = b * b - a * (cc - 1.8496);
+    float t1 = (-b - sqrt(max(h, 0.0))) / a;
+    float3 p1 = o + rd * t1;
+    if (h > 0.0 && t1 > 0.0005 && abs(p1.z) < 0.2) { t = t1; n = float3(p1.x, p1.y, 0.0) / 1.36; }
+    // inside of the tube, seen through the opening
+    h = b * b - a * (cc - 1.21);
+    float t2 = (-b + sqrt(max(h, 0.0))) / a;
+    float3 p2 = o + rd * t2;
+    if (h > 0.0 && t2 > 0.0005 && t2 < t && abs(p2.z) < 0.2) { t = t2; n = float3(-p2.x, -p2.y, 0.0) / 1.1; }
+    // the flat face turned towards the ray
+    float sz = rd.z < 0.0 ? 1.0 : -1.0;
+    float t3 = (0.2 * sz - o.z) / (abs(rd.z) > 1e-7 ? rd.z : 1e-7);
+    float3 p3 = o + rd * t3;
+    float r3 = dot(p3.xy, p3.xy);
+    if (t3 > 0.0005 && t3 < t && r3 > 1.21 && r3 < 1.8496) { t = t3; n = float3(0.0, 0.0, sz); }
+    return t < 9e4 ? t : -1.0;
+}
+
+// The ring may be turned about the upright through its middle: scl.yz = cosine and sine of that turn.
+float3 ringSpace(float3 a, float4 scl) { return float3(scl.y * a.x + scl.z * a.z, a.y, scl.y * a.z - scl.z * a.x); }
+float3 worldSpace(float3 a, float4 scl) { return float3(scl.y * a.x - scl.z * a.z, a.y, scl.y * a.z + scl.z * a.x); }
+
+// The ring is cut flat, but it is shaded as if its edges were rounded off: that is what makes the metal catch
+// a light from every side. p = place on the ring, n = its true normal.
+float3 ringRound(float3 p, float3 n, float4 scl)
+{
+    float3 q = ringSpace(p - float3(0.0, 1.72, -1.0), scl);
+    float3 m = ringSpace(n, scl);
+    float r = max(length(q.xy), 1e-4);
+    float3 radial = float3(q.x, q.y, 0.0) / r;
+    float3 bent = abs(m.z) > 0.5 ? m + radial * (0.9 * (r - 1.23) / 0.13) : m + float3(0.0, 0.0, 0.9 * q.z / 0.2);
+    return worldSpace(normalize(bent), scl);
+}
+
+// ---- things that move -------------------------------------------------------------------------------------
+// The slow clocks of the scene are read once per pixel: mvA = sine and cosine of the two clocks that carry
+// whatever drifts on the water, mvB = the same for whatever swings. Each thing mixes them in its own way.
+// lantern number i: its middle (xyz) and radius (w). The floating ones come first, then the hanging ones.
+float4 lanternAt(float i, float4 mvA, float4 mvB)
+{
+    float nf = float(LANTERNS_FLOATING);
+    float4 mixing = frac(i * float4(0.618034, 0.754878, 0.569840, 0.324718) + float4(0.1, 0.45, 0.7, 0.2)) * 2.0 - 1.0;
+    float3 c = float3(0.0, 0.0, 0.0);
+    float r = 0.27;
+    if (i < nf - 0.5)
+    {
+        float2 b = float2(1.55, 5.3);
+        if (i > 0.5) b = float2(-2.05, 1.6);
+        if (i > 1.5) b = float2(1.9, -3.6);
+        if (i > 2.5) b = float2(-1.3, -5.6);
+        if (i > 3.5) b = float2(2.15, 1.0);
+        float dr = clamp(LANTERN_DRIFT, 0.0, 1.0) * 0.36;
+        c = float3(b.x + dr * dot(mixing.xy, mvA.xy), 0.28, b.y + dr * dot(mixing.zw, mvA.zw));
+    }
+    else
+    {
+        float j = i - nf;
+        float sx = frac(j * 0.5) < 0.25 ? -1.0 : 1.0;
+        float z = -1.2;
+        if (j > 0.5) z = -4.6;
+        if (j > 1.5) z = -8.0;
+        if (j > 2.5) z = 0.9;
+        float sw = clamp(LANTERN_SWAY, 0.0, 1.0) * 0.22;
+        float ax = sw * dot(mixing.xy, mvB.xy);
+        float az = sw * dot(mixing.zw, mvB.zw);
+        c = float3(sx * 6.4 + ax, 2.85 + 0.45 * (ax * ax + az * az), z + az);
+        r = 0.3;
+    }
+    return float4(c.x, c.y, c.z, r);
+}
+
+float3 lanternColor(float i)
+{
+    float h = (frac(i * 0.618034 + 0.25) - 0.5) * clamp(LANTERN_VARIETY, 0.0, 1.0);
+    return float3(LANTERN_R, LANTERN_G * (1.0 + 0.9 * h), LANTERN_B * (1.0 + 1.6 * h));
+}
+
+// light sent out by every bit of a lantern's paper
+float3 lanternLe(float i) { return lanternColor(i) * (20.0 * LANTERN_BRIGHTNESS); }
+
+// glass float number k: middle and radius
+float4 floatAt(float k, float4 mvA)
+{
+    float2 b = float2(-1.1, 2.6);
+    if (k > 0.5) b = float2(2.3, 4.2);
+    if (k > 1.5) b = float2(-0.4, 5.6);
+    float r = 0.2 + 0.07 * frac(k * 0.618034 + 0.4);
+    float dr = clamp(LANTERN_DRIFT, 0.0, 1.0) * 0.22;
+    float4 mixing = frac(k * float4(0.754878, 0.324718, 0.618034, 0.569840) + float4(0.6, 0.15, 0.35, 0.9)) * 2.0 - 1.0;
+    return float4(b.x + dr * dot(mixing.xy, mvA.zw), 0.12 + 0.42 * r, b.y + dr * dot(mixing.zw, mvA.xy), r);
+}
+
+float orbRadius() { return clamp(ORB_SIZE, 0.0, 1.0); }
+
+// ---- the moon ---------------------------------------------------------------------------------------------
+// 1 - cosine of the moon's angular radius (written with the half angle, which keeps it exact for a small moon)
+float moonCap()
+{
+    float sh = sin(0.5 * radians(clamp(MOON_SIZE, 0.25, 10.0)));
+    return 2.0 * sh * sh;
+}
+
+// The disc is as bright as it has to be for the chosen amount of moonlight, so the light on the ground does
+// not change with the size of the moon.
+float3 moonLe() { return float3(MOON_R, MOON_G, MOON_B) * (MOON * 4.0 / (6.2831853 * moonCap())); }
+
+void sampleMoon(float2 u, float3 md, out float3 wi, out float pdf)
+{
+    float cosT = 1.0 - u.x * moonCap();
+    float sinT = sqrt(max(1.0 - cosT * cosT, 0.0));
+    float ph = 6.2831853 * u.y;
+    float3 t1, t2;
+    basis(md, t1, t2);
+    wi = normalize((t1 * cos(ph) + t2 * sin(ph)) * sinT + md * cosT);
+    pdf = 1.0 / (6.2831853 * moonCap());
+}
+
+// Direction towards a round lantern from the point p: the distance, the probability density of that direction
+// (per solid angle) and the direction itself.
+void sampleBall(float3 p, float2 u, float3 c, float r, out float3 wi, out float dist, out float pdf)
+{
+    float3 d = c - p;
+    float dd = dot(d, d);
+    float dc = sqrt(dd);
+    float rr = r * r;
+    float sin2 = min(rr / max(dd, 1e-6), 0.999);
+    float cosMax = sqrt(1.0 - sin2);
+    float oneMinus = sin2 / (1.0 + cosMax);
+    float cosT = 1.0 - u.x * oneMinus;
+    float sinT = sqrt(max(1.0 - cosT * cosT, 0.0));
+    float ph = 6.2831853 * u.y;
+    float3 w = d / max(dc, 1e-4);
+    float3 t1, t2;
+    basis(w, t1, t2);
+    wi = normalize((t1 * cos(ph) + t2 * sin(ph)) * sinT + w * cosT);
+    dist = max(dc * cosT - sqrt(max(rr - dd * sinT * sinT, 0.0)), 0.0);
+    pdf = 1.0 / (6.2831853 * oneMinus);
+}
+
+// night sky: deep blue with a band of moonlit haze along the horizon, a halo around the moon, far hills and
+// (seen directly only) stars
+float3 skyGlow() { return float3(0.11, 0.22, 0.46) * SKY; }
+
+float3 skyLight(float3 rd, float3 md, float sharp, float tm)
+{
+    float h = saturate(rd.y);
+    float low = 1.0 - h;
+    float low4 = low * low * low * low;
+    float3 col = skyGlow() * (0.07 + 0.25 * low4 + 0.9 * low4 * low4 * low4);
+    float mu = saturate(dot(rd, md));
+    float mu8 = mu * mu * mu * mu * mu * mu * mu * mu;
+    col += float3(MOON_R, MOON_G, MOON_B) * (MOON * SKY * (0.02 * mu8 + 0.35 * pow(mu8, 60.0)));
+    float2 sp = rd.xz / (0.35 + h) * 52.0;
+    float2 cell = floor(sp);
+    float2 hs = hash23(float3(cell.x, cell.y, 3.0));
+    float sd = length(frac(sp) - 0.5 - (hs - 0.5) * 0.7);
+    float sb = hash12(cell + 5.3);
+    float sb4 = sb * sb * sb * sb;
+    float star = (1.0 - smoothstep(0.0, 0.06, sd)) * sb4 * sb4 * (0.7 + 0.3 * sin(tm * (1.0 + 3.0 * sb) + sb * 40.0));
+    col += float3(0.8, 0.9, 1.0) * (sharp * STARS * 9.0 * star * smoothstep(0.03, 0.25, rd.y));
+    float az = atan2(rd.x, -rd.z);
+    float ridge = 0.016 + 0.012 * sin(az * 5.0 + 1.0) + 0.006 * sin(az * 13.0 + 2.0) + 0.003 * sin(az * 31.0);
+    return col * lerp(0.35, 1.0, smoothstep(ridge - 0.002, ridge + 0.002, rd.y));
+}
+
+// ---- mist -------------------------------------------------------------------------------------------------
+float mistSigma() { return 0.0125 * MIST; }
+float mistTop() { return clamp(MIST_HEIGHT, 0.3, 100.0); }
+float mistAt(float y) { return mistSigma() * exp(-max(y, 0.0) / mistTop()); }
+
+// how much mist lies along the first t metres of a ray (the mist thins out with height)
+float mistDepth(float3 ro, float3 rd, float t)
+{
+    float x = rd.y * t / mistTop();
+    float xs = abs(x) < 1e-3 ? 1e-3 : max(x, -30.0);
+    return mistSigma() * exp(-max(ro.y, 0.0) / mistTop()) * t * (1.0 - exp(-xs)) / xs;
+}
+
+// ---- the water --------------------------------------------------------------------------------------------
+// Slope of the water surface at q (xy), the part of the ripples too fine to see from here, which turns into
+// blur (z), and how strongly the surface bends, which gathers light on the bottom (w).
+// along = viewing direction seen from above, fl / fa = size of the pixel on the water along / across it.
+float4 ripples(float2 q, float tm, float4 mvA, float4 mvB, float2 along, float fa, float fl)
+{
+    float2 slope = float2(0.0, 0.0);
+    float lost = 0.0;
+    float bend = 0.0;
+    float sc = clamp(RIPPLE_SCALE, 0.2, 4.0);
+    float sp = RIPPLE_SPEED * tm;
+    float2 across = float2(-along.y, along.x);
+
+    // a light breeze: four trains of small waves with bent crests
+    [loop] for (int w = 0; w < 4; w++)
+    {
+        float fw = float(w);
+        float ang = 0.55 + 1.13 * fw;
+        float2 d = float2(cos(ang), sin(ang));
+        float2 e = float2(-d.y, d.x);
+        float k = (6.5 + 5.0 * fw) / sc;
+        float inner = dot(e, q) * k * 0.31 + fw * 1.9 + 0.11 * sp;
+        float ph = dot(d, q) * k - sp * sqrt(k) * 0.5 + 1.2 * sin(inner) + fw * 1.7;
+        float2 g = d + e * (0.372 * cos(inner));
+        float s = RIPPLE_STRENGTH * 0.042 / (1.0 + 0.45 * fw);
+        float2 kv = g * k;
+        float ka = dot(kv, along) * fl;
+        float kb = dot(kv, across) * fa;
+        float att = exp(-0.125 * (ka * ka + kb * kb));
+        slope += g * (s * cos(ph) * att);
+        lost += 0.5 * s * s * dot(g, g) * (1.0 - att * att);
+        bend -= s * k * sin(ph) * att;
+    }
+
+    // slow rings: three places where a drop falls every few seconds, a new place each time
+    [loop] for (int dr = 0; dr < 3; dr++)
+    {
+        float fd = float(dr);
+        float period = 9.0 + 2.5 * fd;
+        float clock = sp / period + fd * 0.37;
+        float age = frac(clock) * period;
+        float2 hp = hash23(float3(floor(clock), fd, 11.0));
+        float2 c = float2((hp.x - 0.5) * 5.0, 1.0 + (hp.y - 0.5) * 15.0);
+        float2 dq = q - c;
+        float r = length(dq) + 1e-4;
+        float2 d = dq / r;
+        float k = 8.5 / sc;
+        float front = 0.42 * age * sc;
+        float x = (r - front + 0.7 * sc) / (0.95 * sc);
+        float fade = 1.0 - age / period;
+        float s = RIPPLE_RINGS * 0.085 * exp(-x * x) * fade * fade * smoothstep(0.0, 0.8, age) / (1.0 + 0.25 * r);
+        float ph = k * (r - front);
+        float ka = dot(d, along) * k * fl;
+        float kb = dot(d, across) * k * fa;
+        float att = exp(-0.125 * (ka * ka + kb * kb));
+        slope += d * (s * cos(ph) * att);
+        lost += 0.5 * s * s * (1.0 - att * att);
+        bend -= s * k * sin(ph) * att;
+    }
+
+    // every floating lantern bobs a little and sends out small rings of its own
+    [loop] for (int lf = 0; lf < LANTERNS_FLOATING; lf++)
+    {
+        float4 lc = lanternAt(float(lf), mvA, mvB);
+        float2 dq = q - lc.xz;
+        float r = length(dq) + 1e-4;
+        float2 d = dq / r;
+        float k = 11.0 / sc;
+        float s = RIPPLE_RINGS * 0.05 * exp(-r / (1.6 * sc)) * smoothstep(0.2, 0.4, r);
+        float ph = k * r - sp * 1.6 + float(lf) * 2.0;
+        float ka = dot(d, along) * k * fl;
+        float kb = dot(d, across) * k * fa;
+        float att = exp(-0.125 * (ka * ka + kb * kb));
+        slope += d * (s * cos(ph) * att);
+        lost += 0.5 * s * s * (1.0 - att * att);
+        bend -= s * k * sin(ph) * att;
+    }
+    return float4(slope.x, slope.y, lost, bend);
+}
+
+// ---- the scene --------------------------------------------------------------------------------------------
+// What the back wall is at the place q (x and height): 0 = wall, 1 = the moon gate, 2 = one of the four small
+// lattice windows beside it. lattice = 1 counts the thin diagonal bars in the windows as wall.
+float wallOpening(float2 q, float lattice)
+{
+    float2 g = q - float2(0.0, 2.5);
+    float ax = abs(q.x);
+    float2 w = float2(ax - (ax < 5.2 ? 3.8 : 6.6), q.y - 1.95);
+    float2 bars = abs(frac(float2(w.x + w.y, w.x - w.y) * 2.5 + 0.5) - 0.5);
+    float inWindow = (abs(w.x) < 0.6 && abs(w.y) < 0.6 && min(bars.x, bars.y) > 0.07 * lattice) ? 2.0 : 0.0;
+    return dot(g, g) < 4.0 ? 1.0 : inWindow;
+}
+
+float columnGap() { return 16.8 / float(max(COLUMNS - 1, 1)); }
+
+// Of a whole row of columns a ray can only touch the two next to the place where it enters their strip:
+// the number of the first of them (o, d = the ray, mirrored so that the row stands at x = 4.95).
+float firstColumn(float3 o, float3 d)
+{
+    float idx = 1.0 / (abs(d.x) > 1e-7 ? d.x : 1e-7);
+    float tIn = max(min((4.62 - o.x) * idx, (5.28 - o.x) * idx), 0.0);
+    return clamp(floor((o.z + d.z * min(tIn, 1e4) + 10.6) / columnGap()), 0.0, float(COLUMNS - 1));
+}
+
+// closest surface along the ray: distance, outward normal and object number (15 = nothing, the sky)
+float traceScene(float3 ro, float3 rd, float4 mvA, float4 mvB, float4 scl, out float3 n, out float id)
+{
+    float tBest = 1e5;
+    n = float3(0.0, 1.0, 0.0);
+    id = 15.0;
+
+    // paving and water
+    if (rd.y < -1e-6)
+    {
+        float tg = -ro.y / rd.y;
+        if (tg > 0.0005) { tBest = tg; id = 0.0; }
+        float tw = (0.12 - ro.y) / rd.y;
+        float2 wq = ro.xz + rd.xz * tw;
+        if (tw > 0.0005 && abs(wq.x) < 3.0 && abs(wq.y - 1.0) < 8.5) { tBest = tw; id = 1.0; }
+    }
+
+    // rim of the pool: a block with the pool cut out of it
+    float3 bn;
+    float3 rimO = ro - float3(0.0, 0.1, 1.0);
+    float tr = iBox(rimO, rd, float3(3.45, 0.1, 8.95), bn);
+    if (tr > 0.0 && tr < tBest)
+    {
+        float3 rq = rimO + rd * tr;
+        if (bn.y < 0.5 || abs(rq.x) > 3.0 || abs(rq.z) > 8.5) { tBest = tr; n = bn; id = 2.0; }
+    }
+    float2 rn;
+    float te = rectExit(rimO.xz, rd.xz, float2(3.0, 8.5), rn);
+    float ye = ro.y + rd.y * te;
+    if (te > 0.0 && te < tBest && ye > 0.12 && ye < 0.2) { tBest = te; n = float3(rn.x, 0.0, rn.y); id = 2.0; }
+
+    // side walls, seen from inside (towards the camera the courtyard is open)
+    float sgx = rd.x < 0.0 ? -1.0 : 1.0;
+    float tx = (8.6 - ro.x * sgx) / max(abs(rd.x), 1e-7);
+    float3 px = ro + rd * tx;
+    if (tx > 0.0005 && tx < tBest && px.y < 4.6 && px.z > -13.6 && px.z < 17.0)
+    {
+        tBest = tx; n = float3(-sgx, 0.0, 0.0); id = 4.0;
+    }
+
+    // back wall with the moon gate: the face the ray meets first, then the inside of the opening
+    float zf = rd.z < 0.0 ? -13.0 : -13.6;
+    float tb = (zf - ro.z) / (abs(rd.z) > 1e-7 ? rd.z : 1e-7);
+    float3 pb = ro + rd * tb;
+    if (tb > 0.0005 && tb < tBest && pb.y < 4.6)
+    {
+        float opening = wallOpening(pb.xy, 1.0);
+        if (opening < 0.5) { tBest = tb; n = float3(0.0, 0.0, rd.z < 0.0 ? 1.0 : -1.0); id = 4.0; }
+        else if (opening > 1.5)
+        {
+            // a window: the ray may still touch the side of the opening on its way through the wall
+            float sxw = pb.x < 0.0 ? -1.0 : 1.0;
+            float axw = abs(pb.x);
+            float2 wn;
+            float tw2 = rectExit(float2(axw - (axw < 5.2 ? 3.8 : 6.6), pb.y - 1.95), float2(rd.x * sxw, rd.y), float2(0.6, 0.6), wn);
+            if (tw2 > 0.0 && tw2 < 0.6 / max(abs(rd.z), 1e-7) && tb + tw2 < tBest)
+            {
+                tBest = tb + tw2; n = float3(wn.x * sxw, wn.y, 0.0); id = 4.0;
+            }
+        }
+    }
+    float2 go = ro.xy - float2(0.0, 2.5);
+    float ga = max(dot(rd.xy, rd.xy), 1e-9);
+    float gbb = dot(go, rd.xy);
+    float gh = gbb * gbb - ga * (dot(go, go) - 4.0);
+    float tg2 = (-gbb + sqrt(max(gh, 0.0))) / ga;
+    float3 pg = ro + rd * tg2;
+    if (gh > 0.0 && tg2 > 0.0005 && tg2 < tBest && pg.z > -13.6 && pg.z < -13.0)
+    {
+        tBest = tg2; n = float3(-pg.x, 2.5 - pg.y, 0.0) * 0.5; id = 4.0;
+    }
+
+    // the two colonnades are mirror images: the ray is mirrored instead
+    [loop] for (int sd = 0; sd < 2; sd++)
+    {
+        float sx = sd == 0 ? -1.0 : 1.0;
+        float3 o = float3(ro.x * sx, ro.y, ro.z);
+        float3 d = float3(rd.x * sx, rd.y, rd.z);
+        if (max(o.x, o.x + d.x * min(tBest, 80.0)) > 4.4)                 // does the ray reach this side at all?
+        {
+            float3 sn;
+            float ts = iBox(o - float3(6.5, 4.25, -3.0), d, float3(2.1, 0.15, 10.0), sn);       // roof slab
+            if (ts > 0.0 && ts < tBest) { tBest = ts; n = float3(sn.x * sx, sn.y, sn.z); id = 8.0; }
+            ts = iBox(o - float3(4.95, 3.9, -3.0), d, float3(0.38, 0.2, 10.0), sn);             // beam
+            if (ts > 0.0 && ts < tBest) { tBest = ts; n = float3(sn.x * sx, sn.y, sn.z); id = 8.0; }
+            ts = iBox(o - float3(6.55, 0.11, -3.0), d, float3(2.05, 0.11, 10.0), sn);           // step
+            if (ts > 0.0 && ts < tBest) { tBest = ts; n = float3(sn.x * sx, sn.y, sn.z); id = 9.0; }
+            float k0 = firstColumn(o, d);
+            [loop] for (int k = 0; k < 2; k++)
+            {
+                float cz = -10.6 + columnGap() * min(k0 + float(k), float(COLUMNS - 1));
+                float tc = iColumn(o, d, float2(4.95, cz), 0.33, 0.2, 3.72);
+                if (tc > 0.0 && tc < tBest)
+                {
+                    tBest = tc;
+                    float3 pc = o + d * tc;
+                    n = float3((pc.x - 4.95) * sx, 0.0, pc.z - cz) / 0.33;
+                    id = 7.0;
+                }
+            }
+        }
+    }
+
+    // the sculpture in the pool: block, ring and glass orb
+    float3 so = ro - float3(0.0, 1.45, -1.0);
+    float sb = dot(so, rd);
+    float sh = sb * sb - dot(so, so) + 3.25;
+    if (sh > 0.0 && sqrt(sh) - sb > 0.0)
+    {
+        float3 qn;
+        float tq = iBox(ro - float3(0.0, 0.18, -1.0), rd, float3(0.85, 0.18, 0.45), qn);
+        if (tq > 0.0 && tq < tBest) { tBest = tq; n = qn; id = 10.0; }
+        tq = iRing(ringSpace(ro - float3(0.0, 1.72, -1.0), scl), ringSpace(rd, scl), qn);
+        if (tq > 0.0 && tq < tBest) { tBest = tq; n = worldSpace(qn, scl); id = 11.0; }
+        float3 orbC = float3(0.0, scl.x, -1.0);
+        tq = iSphere(ro, rd, orbC, orbRadius());
+        if (tq > 0.0 && tq < tBest) { tBest = tq; n = (ro + rd * tq - orbC) / max(orbRadius(), 1e-4); id = 12.0; }
+    }
+
+    // whatever floats on the pool: glass floats and lanterns (only rays that come down to them)
+    float3 pEnd = ro + rd * min(tBest, 80.0);
+    if (min(ro.y, pEnd.y) < 0.6)
+    {
+        [loop] for (int gf = 0; gf < GLASS_FLOATS; gf++)
+        {
+            float4 fc = floatAt(float(gf), mvA);
+            float tf = iSphere(ro, rd, fc.xyz, fc.w);
+            if (tf > 0.0 && tf < tBest) { tBest = tf; n = (ro + rd * tf - fc.xyz) / fc.w; id = 13.0; }
+        }
+        [loop] for (int li = 0; li < LANTERNS_FLOATING; li++)
+        {
+            float4 lc = lanternAt(float(li), mvA, mvB);
+            float tl = iSphere(ro, rd, lc.xyz, lc.w);
+            if (tl > 0.0 && tl < tBest) { tBest = tl; n = (ro + rd * tl - lc.xyz) / lc.w; id = 20.0 + float(li); }
+        }
+    }
+    // the lanterns under the colonnades (only rays that get there)
+    if (max(abs(ro.x), abs(pEnd.x)) > 5.8)
+    {
+        [loop] for (int lh = LANTERNS_FLOATING; lh < LANTERNS_FLOATING + LANTERNS_HANGING; lh++)
+        {
+            float4 lc = lanternAt(float(lh), mvA, mvB);
+            float tl = iSphere(ro, rd, lc.xyz, lc.w);
+            if (tl > 0.0 && tl < tBest) { tBest = tl; n = (ro + rd * tl - lc.xyz) / lc.w; id = 20.0 + float(lh); }
+        }
+    }
+    return tBest;
+}
+
+// How much light gets from ro to ro + rd * tmax. walls = 1: also ask the courtyard walls (needed for the moon
+// and for anything outside the gate; between two places inside the courtyard they can never be in the way).
+// Lanterns and glass floats do not block. Light through the glass orb is not blocked but gathered towards the
+// middle of its shadow: a cheap stand-in for the caustic a ball of glass really throws.
+float3 shadowRay(float3 ro, float3 rd, float tmax, float walls, float4 scl)
+{
+    float vis = 1.0;
+    float reach = min(tmax, 80.0);
+    float3 pe = ro + rd * reach;
+
+    if (walls > 0.5)
+    {
+        // side walls
+        float sgx = rd.x < 0.0 ? -1.0 : 1.0;
+        float tx = (8.6 - ro.x * sgx) / max(abs(rd.x), 1e-7);
+        float3 px = ro + rd * tx;
+        if (tx > 0.0 && tx < tmax && px.y < 4.6 && px.z > -13.6 && px.z < 17.0) vis = 0.0;
+        // back wall: both of its faces have to be crossed inside an opening or above the wall
+        float iz = 1.0 / (abs(rd.z) > 1e-7 ? rd.z : 1e-7);
+        float t1 = (-13.0 - ro.z) * iz;
+        float t2 = (-13.6 - ro.z) * iz;
+        float3 p1 = ro + rd * t1;
+        float3 p2 = ro + rd * t2;
+        // (walls = 2, for the mist: the lattice is not resolved, the windows just let three quarters through)
+        float op1 = wallOpening(p1.xy, walls < 1.5 ? 1.0 : 0.0);
+        if (t1 > 0.0 && t1 < tmax && p1.y < 4.6) vis *= op1 < 0.5 ? 0.0 : ((op1 > 1.5 && walls > 1.5) ? 0.74 : 1.0);
+        if (t2 > 0.0 && t2 < tmax && p2.y < 4.6 && wallOpening(p2.xy, 0.0) < 0.5) vis = 0.0;
+    }
+
+    // rim of the pool (only rays that dip below its top can touch it)
+    if (min(ro.y, pe.y) < 0.2)
+    {
+        float3 bn;
+        float3 rimO = ro - float3(0.0, 0.1, 1.0);
+        float tr = iBox(rimO, rd, float3(3.45, 0.1, 8.95), bn);
+        float3 rq = rimO + rd * tr;
+        if (tr > 0.0 && tr < tmax && (bn.y < 0.5 || abs(rq.x) > 3.0 || abs(rq.z) > 8.5)) vis = 0.0;
+    }
+
+    // colonnades: roof and columns of the side(s) the ray reaches (the beam hides in the shadow of the roof)
+    [loop] for (int sd = 0; sd < 2; sd++)
+    {
+        float sx = sd == 0 ? -1.0 : 1.0;
+        float3 o = float3(ro.x * sx, ro.y, ro.z);
+        float3 d = float3(rd.x * sx, rd.y, rd.z);
+        // where the ray gets under this roof, if it does: not at all, or too high, or in front of it, costs nothing
+        float tIn = o.x > 4.4 ? 0.0 : (4.4 - o.x) / max(d.x, 1e-7);
+        float yIn = o.y + d.y * tIn;
+        float zIn = o.z + d.z * tIn;
+        if (tIn < tmax && (yIn < 4.4 || d.y < 0.0) && (zIn < 7.0 || d.z < 0.0))
+        {
+            float blocked = boxBlocks(o - float3(6.5, 4.25, -3.0), d, float3(2.1, 0.15, 10.0), tmax);
+            float k0 = firstColumn(o, d);
+            [loop] for (int k = 0; k < 2; k++)
+            {
+                float cz = -10.6 + columnGap() * min(k0 + float(k), float(COLUMNS - 1));
+                float tc = iColumn(o, d, float2(4.95, cz), 0.33, 0.2, 3.72);
+                blocked += (tc > 0.0 && tc < tmax) ? 1.0 : 0.0;
+            }
+            if (blocked > 0.5) vis = 0.0;
+        }
+    }
+
+    // sculpture
+    float3 tr3 = float3(1.0, 1.0, 1.0);
+    float3 so = ro - float3(0.0, 1.45, -1.0);
+    float sb = dot(so, rd);
+    float sh = sb * sb - dot(so, so) + 3.25;
+    if (sh > 0.0 && sqrt(sh) - sb > 0.0 && -sb - sqrt(sh) < tmax)
+    {
+        float3 qn;
+        float tq = iRing(ringSpace(ro - float3(0.0, 1.72, -1.0), scl), ringSpace(rd, scl), qn);
+        if (tq > 0.0 && tq < tmax) vis = 0.0;
+        vis *= 1.0 - boxBlocks(ro - float3(0.0, 0.18, -1.0), rd, float3(0.85, 0.18, 0.45), tmax);
+        float3 oc = ro - float3(0.0, scl.x, -1.0);
+        float r2 = max(orbRadius() * orbRadius(), 1e-6);
+        float gb = dot(oc, rd);
+        float gh = gb * gb - dot(oc, oc) + r2;
+        float gt = -gb - sqrt(max(gh, 0.0));
+        float gc = saturate(gh / r2);
+        if (gh > 0.0 && gt > 0.0 && gt < tmax) tr3 = float3(GLASS_R, GLASS_G, GLASS_B) * (0.06 + 3.3 * gc * gc * gc);
+    }
+    return tr3 * vis;
+}
+
+// ---- materials --------------------------------------------------------------------------------------------
+// brick-like pattern of slabs: x = a random number per slab, y = 1 on the joints
+float2 slabs(float2 q, float2 size)
+{
+    float row = floor(q.y / size.y);
+    float2 uv = float2(q.x / size.x + frac(row * 0.5), q.y / size.y);
+    float2 f = abs(frac(uv) - 0.5);
+    float joint = max(step(0.5 - 0.011 / size.x, f.x), step(0.5 - 0.011 / size.y, f.y));
+    return float2(hash12(floor(uv) + 17.0), joint);
+}
+
+// where water stands on the paving (0..1)
+float puddles(float2 q)
+{
+    float a = sin(q.x * 0.83 + 1.7 * sin(q.y * 0.61 + 0.5)) + sin(q.y * 1.07 + 1.3 * sin(q.x * 0.47 + 2.1))
+            + 0.5 * sin(q.x * 2.3 - q.y * 1.9);
+    return smoothstep(0.25, 0.6, 0.5 + 0.2 * a + (clamp(FLOOR_WETNESS, 0.0, 1.0) - 0.5) * 1.1);
+}
+
+// kind: 0 = solid surface (base colour, metal or not, roughness), 1 = glass, 2 = light or the end of the path
+void surfaceAt(float id, float3 p, float3 n, out float3 base, out float metal, out float rough, out float kind)
+{
+    float3 stone = float3(STONE_R, STONE_G, STONE_B);
+    float wetness = clamp(FLOOR_WETNESS, 0.0, 1.0);
+    base = float3(0.5, 0.5, 0.5);
+    metal = 0.0;
+    rough = 0.5;
+    kind = 0.0;
+    if (id < 0.5)
+    {
+        // paving: stone slabs, damp, with water standing in the hollows; beyond the gate rough ground
+        float2 sl = slabs(p.xz, float2(1.3, 0.65));
+        float pud = puddles(p.xz);
+        base = stone * (0.72 + 0.5 * sl.x) * lerp(1.0, 0.55, wetness);
+        rough = lerp(0.8, 0.3, wetness) * (0.8 + 0.4 * sl.x);
+        if (sl.y > 0.5) { base *= 0.45; rough = 0.8; }
+        base = lerp(base, base * 0.6, pud);
+        rough = lerp(rough, 0.02, pud);
+        if (p.z < -13.6) { base = float3(0.045, 0.06, 0.05); rough = 0.9; }
+        if (abs(p.x) > 8.6) { base = float3(0.0, 0.0, 0.0); kind = 2.0; }
+    }
+    else if (id < 2.5)
+    {
+        // rim of the pool: honed stone, wet on top
+        float2 sl = slabs(abs(n.z) > 0.5 ? p.xy : p.zx, float2(1.5, 0.45));
+        base = stone * (1.05 + 0.3 * sl.x) * lerp(1.0, 0.7, wetness);
+        rough = lerp(0.5, 0.07, wetness) * (0.7 + 0.6 * sl.x);
+        if (sl.y > 0.5 && n.y > 0.5) { base *= 0.5; rough = 0.6; }
+    }
+    else if (id < 4.5)
+    {
+        // walls: pale plaster over a dark stone base, a band of slate along the top, stone blocks round the gate
+        float blot = 0.5 + 0.25 * sin(p.x * 0.7 + p.z * 0.9 + 2.0 * sin(p.y * 0.8)) + 0.25 * sin(p.y * 2.1 + p.x * 1.3 - p.z * 1.7);
+        base = float3(WALL_R, WALL_G, WALL_B) * (0.82 + 0.18 * blot);
+        rough = 0.9;
+        float bay = abs(frac((p.z + 10.6) / columnGap() + 0.5) - 0.5) * columnGap();
+        if (abs(n.x) > 0.5 && (bay < 0.11 || abs(p.y - 3.25) < 0.08)) { base = float3(0.075, 0.032, 0.022); rough = 0.35; }
+        if (p.y < 0.75) { base = stone * 0.3; rough = lerp(0.6, 0.2, wetness); }
+        if (p.y > 4.28) { base = float3(0.05, 0.055, 0.065); rough = 0.35; }
+        float axw = abs(p.x);
+        float2 wf = abs(float2(axw - (axw < 5.2 ? 3.8 : 6.6), p.y - 1.95));
+        if (p.z < -12.9 && max(wf.x, wf.y) < 0.69) { base = float3(0.075, 0.032, 0.022); rough = 0.35; }
+        float2 g = p.xy - float2(0.0, 2.5);
+        float gr = length(g);
+        if (p.z < -12.9 && gr < 2.42)
+        {
+            float blockA = frac(atan2(g.y, g.x) * 3.5014);
+            base = stone * (0.55 + 0.25 * hash12(float2(floor(atan2(g.y, g.x) * 3.5014), 3.0)));
+            rough = 0.55;
+            if (min(blockA, 1.0 - blockA) < 0.035 || abs(gr - 2.4) < 0.02) base *= 0.4;
+        }
+    }
+    else if (id < 7.5)
+    {
+        // columns: stone drums with a dark foot and a painted band under the beam
+        float drum = abs(frac(p.y / 0.88 + 0.25) - 0.5);
+        base = stone * 1.25 * (0.9 + 0.1 * sin(p.y * 7.0 + p.z * 3.0));
+        rough = 0.6;
+        if (drum > 0.488) base *= 0.55;
+        if (p.y < 0.5) { base = stone * 0.4; rough = 0.3; }
+        if (p.y > 3.42) { base = float3(0.20, 0.035, 0.025); rough = 0.3; }
+        if (abs(p.y - 3.42) < 0.035) { base = float3(1.0, 0.72, 0.30); metal = 1.0; rough = 0.3; }
+    }
+    else if (id < 8.5)
+    {
+        // roof and beam: dark lacquered timber
+        base = float3(0.085, 0.035, 0.025) * (0.8 + 0.4 * frac(p.z * 0.52));
+        rough = 0.7;
+        if (frac(p.z * 0.52) < 0.03) base *= 0.3;
+    }
+    else if (id < 9.5)
+    {
+        float2 sl = slabs(p.zx, float2(1.4, 0.7));
+        base = stone * (0.85 + 0.4 * sl.x) * lerp(1.0, 0.7, wetness);
+        rough = lerp(0.7, 0.3, wetness);
+        if (sl.y > 0.5 && n.y > 0.5) { base *= 0.5; rough = 0.8; }
+    }
+    else if (id < 10.5) { base = float3(0.03, 0.03, 0.035); rough = 0.1; }
+    else if (id < 11.5)
+    {
+        base = float3(SCULPTURE_R, SCULPTURE_G, SCULPTURE_B);
+        metal = 1.0;
+        rough = clamp(SCULPTURE_ROUGHNESS, 0.0, 1.0);
+    }
+    else if (id < 13.5) { kind = 1.0; }
+    else { kind = 2.0; }
+}
+
+// The pool: a mirror-like skin of water over a dark body. The skin gets its normal from the ripples; what is
+// too fine to see from this distance becomes blur. The body is the tiled bottom seen through the tinted
+// water, shifted by refraction, with the bright lines that the ripples gather on it.
+void waterAt(float3 p, float3 rd, float dist, float spread, float tm, float4 mvA, float4 mvB,
+             out float3 n, out float3 base, out float rough)
+{
+    float fa = dist * spread;
+    float fl = fa / max(-rd.y, 0.03);
+    float2 hv = rd.xz;
+    float2 along = hv / max(length(hv), 1e-5);
+    float4 rp = ripples(p.xz, tm, mvA, mvB, along, fa, fl);
+    n = normalize(float3(-rp.x, 1.0, -rp.y));
+    float nv = dot(n, -rd);
+    if (nv < 0.03) n = normalize(n - rd * (0.03 - nv));
+    rough = sqrt(sqrt(0.0000012 + 2.0 * rp.z));
+
+    float depth = clamp(WATER_DEPTH, 0.0, 4.0);
+    float3 inDir = float3(rd.x, 0.0, rd.z) * 0.752;
+    inDir.y = -sqrt(max(1.0 - dot(inDir, inDir), 0.05));
+    float2 bq = p.xz + (inDir.xz / -inDir.y - float2(rp.x, rp.y) * 0.6) * depth;
+    float2 sl = slabs(bq, float2(0.6, 0.6));
+    float3 bottom = float3(0.62, 0.64, 0.62) * (0.8 + 0.25 * sl.x) * (1.0 - 0.5 * sl.y);
+    float3 sig = -log(clamp(float3(WATER_R, WATER_G, WATER_B), float3(0.003, 0.003, 0.003), float3(0.999, 0.999, 0.999)));
+    float3 through = exp(-sig * (depth * (1.0 / -inDir.y + 1.1)));
+    float caust = clamp(1.0 - CAUSTICS * rp.w * depth * 0.7, 0.35, 3.0);
+    base = bottom * through * caust + float3(0.011, 0.010, 0.009) * (float3(1.0, 1.0, 1.0) - through);
+}
+
+// ---- surface reflection (GGX microfacets plus a diffuse base) ---------------------------------------------
+float smithG1(float nx, float a2) { return 2.0 * nx / (nx + sqrt(a2 + (1.0 - a2) * nx * nx)); }
+
+// Light reflected from direction l towards v, already multiplied by the cosine at the surface.
+// pdf = probability density with which sampleBsdf would have chosen l.
+float3 evalBsdf(float3 n, float3 v, float3 l, float3 diff, float3 f0, float a2, float pSpec, out float pdf)
+{
+    float nol = dot(n, l);
+    float nov = max(dot(n, v), 1e-4);
+    float3 res = float3(0.0, 0.0, 0.0);
+    pdf = 0.0;
+    if (nol > 1e-5)
+    {
+        float3 hv = normalize(v + l);
+        float noh = saturate(dot(n, hv));
+        float voh = saturate(dot(v, hv));
+        float dd = noh * noh * (a2 - 1.0) + 1.0;
+        float D = a2 / (3.14159265 * dd * dd);
+        float g1v = smithG1(nov, a2);
+        float g1l = smithG1(nol, a2);
+        float fw = pow(1.0 - voh, 5.0);
+        float3 F = f0 + (float3(1.0, 1.0, 1.0) - f0) * fw;
+        float3 spec = F * (D * g1v * g1l / (4.0 * nov));               // the 1 / nol cancels against the cosine
+        res = spec + diff * (1.0 - lum(F)) * (nol / 3.14159265);
+        pdf = pSpec * g1v * D / (4.0 * nov) + (1.0 - pSpec) * nol / 3.14159265;
+    }
+    return res;
+}
+
+// new direction: either a mirror-like bounce off a random microfacet (visible normals only) or a diffuse one
+float3 sampleBsdf(float3 n, float3 v, float a, float pSpec, float2 u, float pick)
+{
+    float3 t1, t2;
+    basis(n, t1, t2);
+    float ph = 6.2831853 * u.x;
+    float3 l = n;
+    if (pick < pSpec)
+    {
+        float3 vl = float3(dot(v, t1), dot(v, t2), dot(v, n));
+        float3 vh = normalize(float3(a * vl.x, a * vl.y, max(vl.z, 1e-4)));
+        float lensq = vh.x * vh.x + vh.y * vh.y;
+        float3 b1 = lensq > 1e-12 ? float3(-vh.y, vh.x, 0.0) / sqrt(lensq) : float3(1.0, 0.0, 0.0);
+        float3 b2 = cross(vh, b1);
+        float r = sqrt(u.y);
+        float p1 = r * cos(ph);
+        float p2 = r * sin(ph);
+        float s = 0.5 * (1.0 + vh.z);
+        p2 = (1.0 - s) * sqrt(max(1.0 - p1 * p1, 0.0)) + s * p2;
+        float3 nh = b1 * p1 + b2 * p2 + vh * sqrt(max(1.0 - p1 * p1 - p2 * p2, 0.0));
+        float3 hl = normalize(float3(a * nh.x, a * nh.y, max(nh.z, 1e-6)));
+        float3 hw = t1 * hl.x + t2 * hl.y + n * hl.z;
+        l = reflect(-v, hw);
+    }
+    else
+    {
+        float sz = sqrt(u.y);
+        l = normalize((t1 * cos(ph) + t2 * sin(ph)) * sz + n * sqrt(1.0 - u.y));
+    }
+    return l;
+}
+
+// ---- light in the mist ------------------------------------------------------------------------------------
+// Where along a ray can moonlight be at all? Behind the back wall everywhere; inside the courtyard only in the
+// beams that come through the gate and the windows and above the shadow of the wall. All of these are simple
+// shapes when looked at along the moonlight, so the stretches of the ray that lie in them can be worked out
+// exactly (a little generously, because the moon is not a point). Columns, roofs, the lattice and the sculpture
+// are left to the shadow ray.
+
+// the stretch of t on which lo < a0 + b * t < hi
+float2 between(float a0, float b, float lo, float hi)
+{
+    float ib = 1.0 / (abs(b) > 1e-7 ? b : 1e-7);
+    float t1 = (lo - a0) * ib;
+    float t2 = (hi - a0) * ib;
+    float2 r = float2(min(t1, t2), max(t1, t2));
+    if (abs(b) <= 1e-7) r = (a0 > lo && a0 < hi) ? float2(-1e9, 1e9) : float2(1e9, -1e9);
+    return r;
+}
+
+// One stretch (a..b) is offered; it replaces the stretch chosen so far with the right probability, so that in
+// the end each has been chosen in proportion to its length. u = the random number, renewed on the way.
+void offer(float a, float b, inout float total, inout float u, inout float2 chosen)
+{
+    float len = max(b - a, 0.0);
+    total += len;
+    float pk = len / max(total, 1e-9);
+    if (u < pk) { u = u / pk; chosen = float2(a, b); }
+    else u = (u - pk) / max(1.0 - pk, 1e-6);
+}
+
+// Returns a place t drawn evenly from the moonlit stretches of the ray, and in `weight` their total length
+// divided by the number of stretches t lies in; weight 0 = no moonlight anywhere on this ray.
+float moonlitPlace(float3 ro, float3 rd, float tEnd, float3 md, float uIn, out float weight)
+{
+    float margin = min(0.03 + 7.0 * tan(radians(clamp(MOON_SIZE, 0.25, 10.0))), 0.55);
+    float u = uIn;
+    float total = 0.0;
+    float2 chosen = float2(0.0, 0.0);
+    // the stretch inside the courtyard (ia..ib) and the one behind the wall (oa..ob)
+    float tW = (-13.3 - ro.z) / (abs(rd.z) > 1e-7 ? rd.z : 1e-7);
+    float tSplit = tW > 0.0 ? min(tW, tEnd) : tEnd;
+    float startsIn = ro.z > -13.3 ? 1.0 : 0.0;
+    float ia = startsIn > 0.5 ? 0.0 : tSplit;
+    float ib = startsIn > 0.5 ? tSplit : tEnd;
+    offer(startsIn > 0.5 ? tSplit : 0.0, startsIn > 0.5 ? tEnd : tSplit, total, u, chosen);
+    // where the moonlight that reaches the point ro + rd * t crossed the wall: A + B * t
+    float2 k = md.xy / min(md.z, -1e-4);
+    float2 A = ro.xy - k * (ro.z + 13.3);
+    float2 B = rd.xy - k * rd.z;
+    // through the gate
+    float2 g = A - float2(0.0, 2.5);
+    float rg = 2.0 + margin;
+    float qa = dot(B, B);
+    float qb = dot(B, g);
+    float qc = dot(g, g) - rg * rg;
+    float qd = qb * qb - qa * qc;
+    float qs = sqrt(max(qd, 0.0));
+    float hasBeam = (qa > 1e-9 ? qd : -qc) > 0.0 ? 1.0 : 0.0;
+    float c0 = max(qa > 1e-9 ? (-qb - qs) / qa : -1e9, ia);
+    float c1 = min(qa > 1e-9 ? (-qb + qs) / qa : 1e9, ib);
+    offer(c0, hasBeam > 0.5 ? c1 : c0, total, u, chosen);
+    // over the wall
+    float hw = 4.6 - margin;
+    float2 hr = between(A.y, B.y, hw, 1e6);
+    offer(max(hr.x, ia), min(hr.y, ib), total, u, chosen);
+    // through the four windows
+    float2 wy = between(A.y, B.y, 1.35 - margin, 2.55 + margin);
+    [loop] for (int wi = 0; wi < 4; wi++)
+    {
+        float cx = (wi < 2 ? 3.8 : 6.6) * (wi == 0 || wi == 2 ? -1.0 : 1.0);
+        float2 wx = between(A.x, B.x, cx - 0.6 - margin, cx + 0.6 + margin);
+        offer(max(max(wx.x, wy.x), ia), min(min(wx.y, wy.y), ib), total, u, chosen);
+    }
+    float t = clamp(chosen.x + saturate(u) * (chosen.y - chosen.x), 0.0, tEnd);
+    // in how many of these shapes does the chosen place lie?
+    float2 c = A + B * t;
+    float2 cg = c - float2(0.0, 2.5);
+    float acx = abs(c.x);
+    float2 cw = abs(float2(acx - (acx < 5.2 ? 3.8 : 6.6), c.y - 1.95));
+    float count = (dot(cg, cg) < rg * rg ? 1.0 : 0.0) + (c.y > hw ? 1.0 : 0.0) + (max(cw.x, cw.y) < 0.6 + margin ? 1.0 : 0.0);
+    if (ro.z + rd.z * t < -13.3) count = 1.0;
+    weight = total / max(count, 1.0);
+    return t;
+}
+
+// arc tangent, good to half a percent: enough to weigh the lanterns against each other
+float atanFast(float x)
+{
+    float ax = abs(x);
+    float r = ax < 1.0 ? ax / (1.0 + 0.28 * ax * ax) : 1.5707963 - ax / (ax * ax + 0.28);
+    return x < 0.0 ? -r : r;
+}
+
+// Light scattered towards the eye by the mist along one ray segment. One point on the ray is lit by the moon
+// (mist scatters mostly forwards, so it glows when you look towards the moon) and one by a lantern: the lantern
+// is drawn in proportion to how much each could add along this ray, the point close to it. Both get a shadow
+// ray, so the gate, the wall and the columns cast real shafts of light and shadow into the mist. The faint glow
+// of the sky in the mist is added without a ray.
+float3 fogLight(float3 ro, float3 rd, float tHit, float3 md, float4 mvA, float4 mvB, float4 scl, float first,
+                float2 pix, float dim, float sIdx, float tseed)
+{
+    float2 ua = rnd2(pix, dim, sIdx, tseed);
+    float2 ub = rnd2(pix, dim + 1.0, sIdx, tseed);
+    float2 uc = rnd2(pix, dim + 2.0, sIdx, tseed);
+    // in front of the camera both are asked; in reflections one of the two, in turn, counted double
+    float wMoon = first > 0.5 ? 1.0 : (uc.x < 0.5 ? 2.0 : 0.0);
+    float wLantern = first > 0.5 ? 1.0 : 2.0 - wMoon;
+    uc.x = first > 0.5 ? uc.x : frac(uc.x * 2.0);
+    float tEnd = min(tHit, 60.0);
+    if (rd.y > 0.0) tEnd = min(tEnd, max(4.0 * mistTop() - ro.y, 0.5) / rd.y);    // above that there is no mist worth a ray
+    float3 res = float3(0.0, 0.0, 0.0);
+
+    // moon
+    float lenM;
+    float tM = moonlitPlace(ro, rd, tEnd, md, ua.x, lenM);
+    float3 pM = ro + rd * tM;
+    float3 wiM;
+    float lpM;
+    sampleMoon(float2(ua.y, ub.y), md, wiM, lpM);
+    float cosM = dot(rd, wiM);
+    float phase = 0.75 / (12.566371 * pow(1.25 - cosM, 1.5));          // Henyey-Greenstein, g = 0.5
+    float3 cM = moonLe() * (mistAt(pM.y) * phase * lenM / lpM * exp(-mistDepth(ro, rd, tM) - mistDepth(pM, wiM, 1e4)));
+    if (MOON > 0.0 && wMoon > 0.0 && lenM > 0.0) res += cM * wMoon * shadowRay(pM, wiM, 1e4, 2.0, scl);
+
+    // one lantern
+    float wSum = 0.0;
+    float wSel = 0.0;
+    float uSel = ub.x;
+    float4 cSel = float4(0.0, 3.0, 0.0, 0.3);
+    float iSel = 0.0;
+    [loop] for (int lk = 0; lk < LANTERNS_FLOATING + LANTERNS_HANGING; lk++)
+    {
+        float4 lc = lanternAt(float(lk), mvA, mvB);
+        float dl = dot(lc.xyz - ro, rd);
+        float D = max(length(ro + rd * dl - lc.xyz), lc.w);
+        float wgt = lc.w * lc.w * (atanFast((tEnd - dl) / D) + atanFast(dl / D)) / D + 1e-7;
+        wSum += wgt;
+        float pk = wgt / wSum;
+        if (uSel < pk) { uSel = uSel / pk; wSel = wgt; cSel = lc; iSel = float(lk); }
+        else uSel = (uSel - pk) / max(1.0 - pk, 1e-6);
+    }
+    if (wSel > 0.0 && LANTERN_BRIGHTNESS > 0.0 && wLantern > 0.0)
+    {
+        // near the lantern: points spread evenly in the angle under which they are seen from it
+        float dl = dot(cSel.xyz - ro, rd);
+        float D = max(length(ro + rd * dl - cSel.xyz), cSel.w);
+        float thA = atan2(-dl, D);
+        float thB = atan2(tEnd - dl, D);
+        float tA = clamp(dl + D * tan(lerp(thA, thB, saturate(uSel))), 0.0, tEnd);
+        float pdfA = D / max((thB - thA) * (D * D + (tA - dl) * (tA - dl)), 1e-9);
+        float3 pA = ro + rd * tA;
+        float3 wiA;
+        float distA, lpA;
+        sampleBall(pA, uc, cSel.xyz, cSel.w, wiA, distA, lpA);
+        float3 cA = lanternLe(iSel) * (mistAt(pA.y) * 0.0795775 * exp(-mistDepth(ro, rd, tA) - mistDepth(pA, wiA, distA))
+                                       / max(lpA * pdfA * wSel / wSum, 1e-9));
+        res += cA * wLantern * shadowRay(pA, wiA, distA - 0.01, pA.z < -12.9 ? 1.0 : 0.0, scl);
+    }
+
+    // sky glow
+    res += skyGlow() * (0.08 * (1.0 - exp(-mistDepth(ro, rd, tHit))));
+    return res;
+}
+
+// ---- one light path ---------------------------------------------------------------------------------------
+float3 tracePath(float3 roIn, float3 rdIn, float3 md, float tm, float4 mvA, float4 mvB, float4 scl,
+                 float3 dirPin, float spreadIn, float2 pix, float sIdx, float tseed)
+{
+    float3 ro = roIn;
+    float3 rd = rdIn;
+    float3 L = float3(0.0, 0.0, 0.0);
+    float3 thr = float3(1.0, 1.0, 1.0);
+    float prevPdf = -1.0;                      // density of the last bounce; negative = mirror-sharp or camera
+    float soft = 0.0;                          // bounces since the path first left a matte or frosted surface
+    float fogLeft = float(MIST_DEPTH);         // how many more bounces the mist is lit for; glass does not count
+    float alive = 1.0;                         // 0 once the path has ended in a light or in the sky
+    float spread = spreadIn;                   // how wide the ray has become (for the fine ripples)
+    float3 glassSig = -log(max(float3(GLASS_R, GLASS_G, GLASS_B), float3(0.01, 0.01, 0.01)));
+    float moonPdf = 1.0 / (6.2831853 * moonCap());
+
+    [loop] for (int b = 0; b < BOUNCES; b++)
+    {
+        if (alive > 0.5)
+        {
+            float dim = 2.0 + 8.0 * float(b);
+            float3 n;
+            float id;
+            float t = traceScene(ro, rd, mvA, mvB, scl, n, id);
+            float3 p = ro + rd * t;
+            float isWater = (id > 0.5 && id < 1.5) ? 1.0 : 0.0;
+
+            float3 base;
+            float metal, rough, kind;
+            surfaceAt(id, p, n, base, metal, rough, kind);
+            float3 ng = n;                                  // the true face; n may be bent by ripples or rounding
+            if (isWater > 0.5) waterAt(p, rd, t, spread, tm, mvA, mvB, n, base, rough);
+            if (id > 10.5 && id < 11.5) n = ringRound(p, ng, scl);
+            if (id > 6.5 && id < 7.5) n = normalize(ng + float3(-ng.z, 0.0, ng.x) * (0.3 * sin(20.0 * atan2(ng.z, ng.x))));     // fluted columns
+
+            // what the ray crossed on its way: mist, or the body of a piece of glass
+            float inGlass = (id > 11.5 && id < 13.5 && dot(rd, n) > 0.0) ? 1.0 : 0.0;
+            float3 Lb = float3(0.0, 0.0, 0.0);              // light gathered at this bounce by aiming at the lights
+            float3 Lhit = float3(0.0, 0.0, 0.0);            // light found by running into a light
+            if (fogLeft > 0.5 && MIST > 0.0 && inGlass < 0.5)
+            {
+                Lb += thr * fogLight(ro, rd, t, md, mvA, mvB, scl, b == 0 ? 1.0 : 0.0, pix, dim + 5.0, sIdx, tseed);
+            }
+            thr *= exp(-lerp(float3(1.0, 1.0, 1.0) * mistDepth(ro, rd, t), glassSig * t, inGlass));
+
+            // The ray ran into a light: count it, weighted against the chance that direct sampling had found it.
+            // Moon and lanterns are small, so whichever method is the more likely one takes it all.
+            if (id > 14.5)
+            {
+                float wHit = 1.0;
+                float3 emis = float3(0.0, 0.0, 0.0);
+                if (id < 19.5)
+                {
+                    emis = skyLight(b == 0 ? dirPin : rd, md, b == 0 ? 1.0 : 0.0, tm);       // stars stay sharp whatever the lens does
+                    if (dot(rd, md) > 1.0 - moonCap())
+                    {
+                        emis += moonLe() * (prevPdf >= 0.0 ? step(moonPdf, prevPdf) : 1.0);
+                    }
+                }
+                else
+                {
+                    float li = id - 20.0;
+                    float4 lc = lanternAt(li, mvA, mvB);
+                    float3 od = lc.xyz - ro;
+                    float s2 = min(lc.w * lc.w / dot(od, od), 0.999);
+                    float lp = (1.0 + sqrt(1.0 - s2)) / (6.2831853 * s2);
+                    if (prevPdf >= 0.0) wHit = step(lp, prevPdf);
+                    // the paper: glowing most where the flame is, bamboo hoops, dark caps
+                    float3 q = (p - lc.xyz) / lc.w;
+                    float face = saturate(-dot(rd, n));
+                    float hoops = 1.0 - 0.4 * smoothstep(0.3, 0.5, abs(frac(q.y * 3.5) - 0.5));
+                    float cap = 1.0 - smoothstep(0.80, 0.88, abs(q.y));
+                    float3 lcol = lanternColor(li);
+                    float3 paper = lerp(lcol * lcol * 0.9, lcol + float3(0.35, 0.3, 0.2) * max(lcol.x, max(lcol.y, lcol.z)), face * face * face)
+                                 * (LANTERN_BRIGHTNESS * (0.6 + 3.2 * face * face) * hoops * (0.03 + 0.97 * cap));
+                    emis = soft < 0.5 ? paper : lanternLe(li);
+                }
+                Lhit = thr * emis * wHit;
+                alive = 0.0;
+            }
+            else if (kind > 1.5) alive = 0.0;
+
+            float3 v = -rd;
+            float3 ns = dot(n, v) < 0.0 ? -n : n;
+            float3 f0 = lerp(float3(0.04, 0.04, 0.04), base, metal);
+            if (isWater > 0.5) f0 = float3(0.02, 0.02, 0.02);
+            float3 diff = base * (1.0 - metal);
+            float a = max(rough * rough, 0.002);
+            if (soft > 0.5) a = max(a, 0.25);            // after a matte bounce a mirror is treated as a frosted one: no stray sparkles
+            float a2 = a * a;
+            float nov = max(dot(ns, v), 1e-4);
+            float wSpec = lum(f0 + (float3(1.0, 1.0, 1.0) - f0) * pow(saturate(1.0 - nov), 5.0));
+            float wDiff = lum(diff) * (1.0 - wSpec);
+            float pSpec = wDiff > 0.0 ? clamp(wSpec / (wSpec + wDiff), 0.1, 0.9) : 1.0;
+
+            // Direct light, weighted against the chance that the bounce below finds the same light by itself.
+            // The moon gets a shadow ray at every bounce. Every lantern is weighed at every bounce by what it
+            // could add here (distance, angle, sheen), and the shadow ray goes to one of them, drawn in that
+            // proportion: where nothing is in the way this is very nearly as good as asking all of them, at a
+            // fraction of the cost. LANTERN_RAYS = 1 does ask all of them.
+            if (alive > 0.5 && kind < 0.5)
+            {
+                float2 u0 = rnd2(pix, dim, sIdx, tseed);
+                float2 u1 = rnd2(pix, dim + 1.0, sIdx, tseed);
+                float2 u2 = rnd2(pix, dim + 4.0, sIdx, tseed);
+                float3 po = p + ns * 0.002;
+                float outside = p.z < -12.9 ? 1.0 : 0.0;
+                float3 direct = float3(0.0, 0.0, 0.0);
+
+                float3 wi0;
+                float lp0, bp0;
+                sampleMoon(u0, md, wi0, lp0);
+                float3 c0 = moonLe() * evalBsdf(ns, v, wi0, diff, f0, a2, pSpec, bp0);
+                c0 *= (1.0 - step(lp0, bp0)) / lp0;
+                if (lum(c0) > 0.0) direct += c0 * shadowRay(po, wi0, 1e4, 1.0, scl);
+
+                float wSum = 0.0;
+                float wSel = 0.0;
+                float uSel = u2.x;
+                float iSel = 0.0;
+                float4 lSel = float4(0.0, 3.0, 0.0, 0.3);
+                [loop] for (int ln = 0; ln < LANTERNS_FLOATING + LANTERNS_HANGING; ln++)
+                {
+                    float4 lc = lanternAt(float(ln), mvA, mvB);
+                    if (LANTERN_RAYS > 0)
+                    {
+                        float3 wi1;
+                        float di1, lp1, bp1;
+                        sampleBall(p, frac(u1 + float(ln) * float2(0.754878, 0.569840)), lc.xyz, lc.w, wi1, di1, lp1);
+                        float3 c1 = lanternLe(float(ln)) * evalBsdf(ns, v, wi1, diff, f0, a2, pSpec, bp1);
+                        c1 *= (1.0 - step(lp1, bp1)) / max(lp1, 1e-9);
+                        if (lum(c1) > 0.0) direct += c1 * shadowRay(po, wi1, di1 - 0.004, outside, scl);
+                    }
+                    else
+                    {
+                        float3 dl = lc.xyz - p;
+                        float d2 = max(dot(dl, dl), 1e-4);
+                        float3 ld = dl / sqrt(d2);
+                        float nl = max(dot(ns, ld) + lc.w / sqrt(d2), 0.0);
+                        float noh = saturate(dot(ns, normalize(v + ld)));
+                        float dh = noh * noh * (a2 - 1.0) + 1.0;
+                        float wgt = nl * lc.w * lc.w / d2 * (wDiff + wSpec * min(a2 / (dh * dh), 40.0));
+                        wSum += wgt;
+                        float pk = wgt / max(wSum, 1e-20);
+                        if (uSel < pk) { uSel = uSel / pk; wSel = wgt; iSel = float(ln); lSel = lc; }
+                        else uSel = (uSel - pk) / max(1.0 - pk, 1e-6);
+                    }
+                }
+                if (wSel > 0.0)
+                {
+                    float3 wi1;
+                    float di1, lp1, bp1;
+                    sampleBall(p, u1, lSel.xyz, lSel.w, wi1, di1, lp1);
+                    float3 c1 = lanternLe(iSel) * evalBsdf(ns, v, wi1, diff, f0, a2, pSpec, bp1);
+                    c1 *= (1.0 - step(lp1, bp1)) * wSum / (max(lp1, 1e-9) * wSel);
+                    if (lum(c1) > 0.0) direct += c1 * shadowRay(po, wi1, di1 - 0.004, outside, scl);
+                }
+                Lb += thr * direct;
+            }
+
+            // What the camera sees directly or in a mirror, and the reflection of a light in something frosted,
+            // stay as bright as they are. Light that arrives by a detour over matte or frosted surfaces is
+            // limited: that trades the rare, very bright sample (a "firefly") for a tiny loss of light.
+            float capB = soft > 0.5 ? FIREFLY_CLAMP : 64.0;
+            float capE = soft > 1.5 ? FIREFLY_CLAMP : 64.0;
+            float maxB = max(Lb.x, max(Lb.y, Lb.z));
+            float maxE = max(Lhit.x, max(Lhit.y, Lhit.z));
+            L += Lb * (maxB > capB ? capB / maxB : 1.0) + Lhit * (maxE > capE ? capE / maxE : 1.0);
+
+            // continue the path
+            fogLeft -= 1.0;
+            float2 u4 = rnd2(pix, dim + 2.0, sIdx, tseed);
+            float2 u5 = rnd2(pix, dim + 3.0, sIdx, tseed);
+            if (kind > 0.5 && kind < 1.5)
+            {
+                // glass: mirror or refract, chosen by how much light each takes (Fresnel)
+                float entering = dot(rd, n) < 0.0 ? 1.0 : 0.0;
+                float3 nn = entering > 0.5 ? n : -n;
+                float ior = clamp(GLASS_IOR, 1.0, 3.0);
+                float eta = entering > 0.5 ? 1.0 / ior : ior;
+                float cosi = saturate(-dot(rd, nn));
+                float sin2t = eta * eta * (1.0 - cosi * cosi);
+                float cost = sqrt(max(1.0 - sin2t, 0.0));
+                float rs = (eta * cosi - cost) / (eta * cosi + cost + 1e-7);
+                float rp = (cosi - eta * cost) / (cosi + eta * cost + 1e-7);
+                float fr = sin2t < 1.0 ? 0.5 * (rs * rs + rp * rp) : 1.0;
+                // the mirror image is chosen more often than its share of the light and counted less in return:
+                // bright highlights on the glass then need fewer paths to come out clean
+                float pr = fr < 1.0 ? clamp(fr, 0.2, 0.8) : 1.0;
+                if (u5.x < pr)
+                {
+                    thr *= fr / pr;
+                    rd = reflect(rd, nn);
+                    ro = p + nn * 0.002;
+                }
+                else
+                {
+                    thr *= (1.0 - fr) / (1.0 - pr);
+                    rd = normalize(rd * eta + nn * (eta * cosi - cost));
+                    ro = p - nn * 0.002;
+                }
+                prevPdf = -1.0;
+                soft += step(0.5, soft);
+                fogLeft += 1.0;
+            }
+            else
+            {
+                float3 l = sampleBsdf(ns, v, a, pSpec, u4, u5.x);
+                float bp;
+                float3 f = evalBsdf(ns, v, l, diff, f0, a2, pSpec, bp);
+                thr *= f / max(bp, 1e-6);
+                prevPdf = bp;
+                soft += (u5.x >= pSpec || rough > 0.09 || soft > 0.5) ? 1.0 : 0.0;
+                // a ripple or a rounded edge can throw the mirror image into the surface: it comes back out
+                float3 ngs = dot(ng, v) < 0.0 ? -ng : ng;
+                float under = dot(l, ngs);
+                if (under < 0.004) l = normalize(l + ngs * (0.008 - 2.0 * under));
+                rd = l;
+                ro = p + ngs * 0.003;
+                spread = max(spread, 0.004) + 0.5 * a;
+            }
+        }
+    }
+    return L;
+}
+
+float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+{
+    float2 pix = floor(tex * Resolution);
+    float aspect = Resolution.x / Resolution.y;
+    float tm = Time * ANIMATION_SPEED;
+    float tseed = fmod(Time, 61.0) * 59.0 * float(GRAIN_ANIMATE);
+
+    // the moon, and the slow clocks of everything that drifts or swings
+    float mEl = radians(clamp(MOON_HEIGHT, 2.0, 88.0));
+    float mAz = clamp(MOON_DIRECTION, -1.3, 1.3);
+    float3 md = float3(sin(mAz) * cos(mEl), sin(mEl), -cos(mAz) * cos(mEl));
+    float4 mvA = float4(sin(tm * 0.11), cos(tm * 0.11), sin(tm * 0.083 + 1.0), cos(tm * 0.083 + 1.0));
+    float4 mvB = float4(sin(tm * 0.8), cos(tm * 0.8), sin(tm * 0.63 + 0.5), cos(tm * 0.63 + 0.5));
+    float turn = clamp(RING_TURN, -1.6, 1.6) + RING_SPIN * tm;
+    float4 scl = float4(1.72 + 0.035 * sin(tm * 0.35), cos(turn), sin(turn), 0.0);
+
+    // camera: stands in front of the pool and wanders slowly from side to side
+    float ang = clamp(CAMERA_ANGLE + 0.22 * CAMERA_SWAY * sin(tm * 0.05), -0.5, 0.5);
+    float cd = clamp(CAMERA_DISTANCE, 9.5, 15.5);
+    float3 target = float3(0.0, clamp(CAMERA_LOOK, 0.0, 4.5), -1.0);
+    float3 eye = float3(sin(ang) * cd, clamp(CAMERA_HEIGHT, 0.35, 4.2), -1.0 + cos(ang) * cd);
+    float3 fw = normalize(target - eye);
+    float3 rt = normalize(cross(fw, float3(0.0, 1.0, 0.0)));
+    float3 upv = cross(rt, fw);
+    float fl = 1.0 / tan(radians(clamp(FIELD_OF_VIEW, 10.0, 120.0)) * 0.5);
+    fl *= min(1.0, aspect / 1.5);              // on upright screens widen the view, so the scene still fits
+    float focus = FOCUS_DISTANCE > 0.0 ? FOCUS_DISTANCE : length(float3(0.0, 1.72, -1.0) - eye) - 0.4;
+    float spread = 2.0 / (fl * Resolution.y);
+
+    float3 col = float3(0.0, 0.0, 0.0);
+    [loop] for (int sIdx = 0; sIdx < SAMPLES; sIdx++)
+    {
+        float sf = float(sIdx);
+        float2 uj = rnd2(pix, 0.0, sf, tseed);
+        float2 ul = rnd2(pix, 1.0, sf, tseed);
+        float2 uv = float2((tex.x - 0.5) * 2.0 * aspect, 1.0 - 2.0 * tex.y) + (uj - 0.5) * 2.0 / Resolution.y;
+        float3 dir = normalize(fw * fl + rt * uv.x + upv * uv.y);
+        float3 focal = eye + dir * (focus / dot(dir, fw));
+        float lr = clamp(APERTURE, 0.0, 0.5) * sqrt(ul.x);
+        float la = 6.2831853 * ul.y;
+        float3 ro = eye + (rt * cos(la) + upv * sin(la)) * lr;
+        float3 rd = normalize(focal - ro);
+        float3 L = tracePath(ro, rd, md, tm, mvA, mvB, scl, dir, spread, pix, sf, tseed);
+        col += clamp(L, float3(0.0, 0.0, 0.0), float3(64.0, 64.0, 64.0));
+    }
+    col /= float(SAMPLES);
+
+    // filmic tone curve (ACES fit), display gamma, vignette
+    col *= EXPOSURE;
+    col = saturate(col * (2.51 * col + 0.03) / (col * (2.43 * col + 0.59) + 0.14));
+    col = pow(col, float3(0.4545, 0.4545, 0.4545));
+    float2 vc = tex - 0.5;
+    col *= 1.0 - dot(vc, vc) * VIGNETTE;
+
+    float4 fg = shaderTexture.Sample(samplerState, tex);
+    float2 o = 2.0 * Scale / Resolution;
+    float cover = max(fg.a, max(shaderTexture.Sample(samplerState, tex + o).a, shaderTexture.Sample(samplerState, tex - o).a));
+    col *= 1.0 - TEXT_VEIL * cover;
+    col = col * (1.0 - fg.a) + fg.rgb;
+    col += (hash12(tex * Resolution) - 0.5) / 255.0;
+    return float4(saturate(col), 1.0);
+}

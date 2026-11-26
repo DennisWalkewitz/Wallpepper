@@ -1,0 +1,14 @@
+# clang-format -i src/*.h src/*.cpp tests/*.cpp
+BasedOnStyle: Google
+IndentWidth: 4
+AccessModifierOffset: -4
+ColumnLimit: 120
+DerivePointerAlignment: false
+PointerAlignment: Left
+SpacesBeforeTrailingComments: 3
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+AllowShortLoopsOnASingleLine: true
+AllowShortLambdasOnASingleLine: All
+IncludeBlocks: Preserve
+AlignEscapedNewlines: DontAlign

@@ -1,0 +1,406 @@
+<Window x:Class="Wallpepper.Ui.LibraryWindow" x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:Wallpepper.Ui"
+        Title="Wallpepper" Width="1240" Height="800" MinWidth="980" MinHeight="620"
+        Background="Transparent" Foreground="{StaticResource Text}"
+        FontFamily="{StaticResource Ui}" FontSize="13"
+        UseLayoutRounding="True" SnapsToDevicePixels="True" AllowDrop="True"
+        WindowStartupLocation="CenterScreen">
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="52" GlassFrameThickness="-1" CornerRadius="0" ResizeBorderThickness="6"
+                      UseAeroCaptionButtons="False" NonClientFrameEdges="None"/>
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <!-- gallery card -->
+        <Style x:Key="CardItem" TargetType="ListBoxItem">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="ToolTipService.InitialShowDelay" Value="700"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Grid x:Name="root" Background="Transparent" RenderTransformOrigin="0.5,0.45">
+                            <Grid.RenderTransform><ScaleTransform/></Grid.RenderTransform>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="38"/>
+                            </Grid.RowDefinitions>
+
+                            <Border CornerRadius="10" Background="#14FFFFFF"/>
+                            <Border x:Name="shimmer" CornerRadius="10" Visibility="Collapsed">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                        <LinearGradientBrush.RelativeTransform><TranslateTransform X="-1"/></LinearGradientBrush.RelativeTransform>
+                                        <GradientStop Color="#00FFFFFF" Offset="0"/>
+                                        <GradientStop Color="#1FFFFFFF" Offset="0.5"/>
+                                        <GradientStop Color="#00FFFFFF" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                            </Border>
+                            <Border CornerRadius="10">
+                                <Border.Background><ImageBrush ImageSource="{Binding Thumb}" Stretch="UniformToFill"/></Border.Background>
+                            </Border>
+
+                            <StackPanel x:Name="error" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed">
+                                <TextBlock Text="&#xE783;" Style="{StaticResource Glyph}" FontSize="20" Foreground="{StaticResource Danger}"/>
+                                <TextBlock Text="Compile error" Foreground="{StaticResource Text2}" FontSize="12" Margin="0,6,0,0"/>
+                            </StackPanel>
+
+                            <Border CornerRadius="10" BorderBrush="#1FFFFFFF" BorderThickness="1"/>
+                            <Border x:Name="hl" CornerRadius="10" BorderBrush="#73FFFFFF" BorderThickness="1" Opacity="0"/>
+                            <Border x:Name="sel" CornerRadius="13" BorderBrush="{StaticResource Accent}" BorderThickness="2" Margin="-4" Opacity="0"/>
+
+                            <!-- live badge -->
+                            <Border x:Name="live" Visibility="Collapsed" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8"
+                                    Background="#D9101012" CornerRadius="10" Height="20" Padding="7,0,8,0">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Ellipse Width="6" Height="6" Fill="{StaticResource Accent}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="LIVE" FontSize="10" FontWeight="Bold" Foreground="{StaticResource Text}" Margin="5,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- GPU cost -->
+                            <Border x:Name="cost" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="8"
+                                    Background="#D9101012" CornerRadius="10" Height="20" Padding="7,0,8,0" ToolTip="{Binding CostTip}">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Ellipse x:Name="costDot" Width="6" Height="6" Fill="{StaticResource Ok}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding CostLabel}" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource Text}" Margin="5,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- favourite -->
+                            <Button x:Name="star" Click="Star_Click" Focusable="False" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="6"
+                                    Width="26" Height="26" Padding="0" Background="#D9101012" BorderThickness="0" Opacity="0"
+                                    FontFamily="{StaticResource Icons}" FontSize="12" Content="&#xE734;" ToolTip="Favourite"/>
+
+                            <TextBlock x:Name="name" Grid.Row="1" Text="{Binding Name}" VerticalAlignment="Center" Margin="2,0,2,2"
+                                       Foreground="{StaticResource Text2}" FontSize="13" TextTrimming="CharacterEllipsis"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="star" Property="Opacity" Value="1"/>
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="hl" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
+                                            <DoubleAnimation Storyboard.TargetName="root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.025" Duration="0:0:0.16"><DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction></DoubleAnimation>
+                                            <DoubleAnimation Storyboard.TargetName="root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.025" Duration="0:0:0.16"><DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction></DoubleAnimation>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="hl" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.2"/>
+                                            <DoubleAnimation Storyboard.TargetName="root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.2"/>
+                                            <DoubleAnimation Storyboard.TargetName="root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.2"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="name" Property="Foreground" Value="{StaticResource Text}"/>
+                                <Setter TargetName="name" Property="FontWeight" Value="SemiBold"/>
+                                <Trigger.EnterActions><BeginStoryboard><Storyboard><DoubleAnimation Storyboard.TargetName="sel" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.14"/></Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard><Storyboard><DoubleAnimation Storyboard.TargetName="sel" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.14"/></Storyboard></BeginStoryboard></Trigger.ExitActions>
+                            </Trigger>
+                            <DataTrigger Binding="{Binding IsLoading}" Value="True">
+                                <Setter TargetName="shimmer" Property="Visibility" Value="Visible"/>
+                                <DataTrigger.EnterActions>
+                                    <BeginStoryboard x:Name="shim">
+                                        <Storyboard RepeatBehavior="Forever">
+                                            <DoubleAnimation Storyboard.TargetName="shimmer" Storyboard.TargetProperty="(Border.Background).(Brush.RelativeTransform).(TranslateTransform.X)" From="-1" To="1" Duration="0:0:1.3"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </DataTrigger.EnterActions>
+                                <DataTrigger.ExitActions><StopStoryboard BeginStoryboardName="shim"/></DataTrigger.ExitActions>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding HasError}" Value="True"><Setter TargetName="error" Property="Visibility" Value="Visible"/></DataTrigger>
+                            <DataTrigger Binding="{Binding IsLive}" Value="True"><Setter TargetName="live" Property="Visibility" Value="Visible"/></DataTrigger>
+                            <DataTrigger Binding="{Binding CostLevel}" Value="0"><Setter TargetName="cost" Property="Visibility" Value="Visible"/></DataTrigger>
+                            <DataTrigger Binding="{Binding CostLevel}" Value="1">
+                                <Setter TargetName="cost" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="costDot" Property="Fill" Value="{StaticResource Warn}"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding CostLevel}" Value="2">
+                                <Setter TargetName="cost" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="costDot" Property="Fill" Value="{StaticResource Danger}"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsFavourite}" Value="True">
+                                <Setter TargetName="star" Property="Opacity" Value="1"/>
+                                <Setter TargetName="star" Property="Content" Value="&#xE735;"/>
+                                <Setter TargetName="star" Property="Foreground" Value="{StaticResource Accent}"/>
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid x:Name="Root">
+        <Border x:Name="Tint" Background="#59101013"/>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="408"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ============================================================ left: library -->
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="60"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="36"/>
+                </Grid.RowDefinitions>
+
+                <!-- title bar -->
+                <Grid Margin="20,0,12,0">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Image Source="{StaticResource Logo}" Width="30" Height="30" Margin="-3,0,7,0"/>
+                        <TextBlock Text="Wallpepper" FontFamily="{StaticResource UiDisplay}" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,0,2"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" WindowChrome.IsHitTestVisibleInChrome="True">
+                        <TextBox x:Name="Search" Width="228" Tag="&#xE721;" ToolTip="Search the library" Margin="0,0,6,0"/>
+                        <Button x:Name="SortBtn" Style="{StaticResource IconBtn}" Content="&#xE8CB;" ToolTip="Sort" Click="Sort_Click"/>
+                        <Button x:Name="AddBtn" Style="{StaticResource IconBtn}" Content="&#xE710;" ToolTip="Add shaders (.hlsl) or web wallpapers (.wallpepperweb)" Click="Add_Click"/>
+                        <Button x:Name="PauseBtn" Style="{StaticResource IconBtn}" Content="&#xE769;" ToolTip="Pause wallpaper" Click="Pause_Click"/>
+                        <Button x:Name="SettingsBtn" Style="{StaticResource IconBtn}" Content="&#xE713;" ToolTip="Settings" Click="Settings_Click"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- category chips -->
+                <WrapPanel x:Name="Chips" Grid.Row="1" Margin="20,2,20,6"/>
+
+                <!-- gallery -->
+                <ListBox x:Name="Gallery" Grid.Row="2" Background="Transparent" BorderThickness="0"
+                         ItemContainerStyle="{StaticResource CardItem}" SelectionMode="Single"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False"
+                         MouseDoubleClick="Gallery_DoubleClick"
+                         PreviewMouseRightButtonUp="Gallery_RightClick" FocusVisualStyle="{x:Null}">
+                    <ListBox.Template>
+                        <ControlTemplate TargetType="ListBox">
+                            <ScrollViewer x:Name="scroll" Focusable="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
+                                <ItemsPresenter Margin="20,6,20,20"/>
+                            </ScrollViewer>
+                        </ControlTemplate>
+                    </ListBox.Template>
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate><ui:CardPanel/></ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                </ListBox>
+
+                <!-- empty state -->
+                <StackPanel x:Name="Empty" Grid.Row="2" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed" Margin="0,0,0,40">
+                    <TextBlock Text="&#xE8B9;" Style="{StaticResource Glyph}" FontSize="36" Foreground="{StaticResource Text3}"/>
+                    <TextBlock x:Name="EmptyTitle" Text="Nothing here yet" FontFamily="{StaticResource UiDisplay}" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,16,0,0"/>
+                    <TextBlock x:Name="EmptyText" Text="Add a .hlsl pixel shader or drop files onto this window." Foreground="{StaticResource Text2}" HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                    <Button x:Name="EmptyBtn" Content="Add shaders" HorizontalAlignment="Center" Margin="0,18,0,0" Click="Add_Click"/>
+                </StackPanel>
+
+                <!-- a newer release is available -->
+                <Border x:Name="UpdateBar" Grid.Row="3" Visibility="Collapsed" Margin="20,0,20,12" Background="{StaticResource AccentSoft}" BorderBrush="#66FF963C" BorderThickness="1" CornerRadius="10" Padding="14,7,7,7">
+                    <Grid>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="&#xE896;" Style="{StaticResource Glyph}" Foreground="{StaticResource Accent}" Margin="0,1,10,0"/>
+                            <TextBlock x:Name="UpdateText" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Style="{StaticResource Ghost}" Content="Release notes" Height="30" Padding="10,0" Click="UpdateNotes_Click"/>
+                            <Button Style="{StaticResource Ghost}" Content="Later" Height="30" Padding="10,0" Click="UpdateLater_Click"/>
+                            <Button x:Name="UpdateNowBtn" Style="{StaticResource Primary}" Content="Update" Height="30" MinWidth="84" Margin="6,0,0,0" Click="UpdateNow_Click"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- status line -->
+                <Border Grid.Row="4" BorderBrush="{StaticResource Stroke}" BorderThickness="0,1,0,0">
+                    <Grid Margin="20,0,20,1">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse x:Name="StatusDot" Width="7" Height="7" Fill="{StaticResource Ok}" VerticalAlignment="Center" Margin="0,1,8,0"/>
+                            <TextBlock x:Name="StatusText" Foreground="{StaticResource Text2}" FontSize="12" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <TextBlock x:Name="PerfText" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource Text3}" FontSize="12"/>
+                    </Grid>
+                </Border>
+
+                <!-- toast -->
+                <Border x:Name="ToastBox" Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,18" Opacity="0" IsHitTestVisible="False"
+                        Background="{StaticResource Flyout}" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="10" Padding="14,9,16,10">
+                    <Border.RenderTransform><TranslateTransform Y="8"/></Border.RenderTransform>
+                    <Border.Effect><DropShadowEffect BlurRadius="18" ShadowDepth="4" Direction="270" Opacity="0.4" Color="Black"/></Border.Effect>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock x:Name="ToastIcon" Text="&#xE73E;" Style="{StaticResource Glyph}" FontSize="13" Foreground="{StaticResource Accent}" Margin="0,1,9,0"/>
+                        <TextBlock x:Name="ToastText" Foreground="{StaticResource Text}" MaxWidth="460" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- ============================================================ right: inspector -->
+            <Border x:Name="Side" Grid.Column="1" Background="#33000000" BorderBrush="{StaticResource Stroke}" BorderThickness="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="40"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Button Style="{StaticResource CaptionBtn}" Content="&#xE921;" Click="Min_Click"/>
+                        <Button x:Name="MaxBtn" Style="{StaticResource CaptionBtn}" Content="&#xE922;" Click="Max_Click"/>
+                        <Button Style="{StaticResource CaptionBtn}" Content="&#xE8BB;" Tag="#E81123" Click="Close_Click"/>
+                    </StackPanel>
+
+                    <Grid x:Name="SideBody" Grid.Row="1" ClipToBounds="True">
+
+                        <!-- ============================== shader detail -->
+                        <Grid x:Name="DetailPane">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <Grid Margin="24,12,24,0" Height="202" WindowChrome.IsHitTestVisibleInChrome="True">
+                                <Border CornerRadius="10" Background="#0B0B0D">
+                                    <Border.Effect><DropShadowEffect BlurRadius="28" ShadowDepth="8" Direction="270" Opacity="0.55" Color="Black"/></Border.Effect>
+                                </Border>
+                                <Border x:Name="PreviewStill" CornerRadius="10"/>
+                                <Border x:Name="PreviewSlot"/>
+                                <Border CornerRadius="10" BorderBrush="#24FFFFFF" BorderThickness="1"/>
+                                <StackPanel x:Name="PreviewError" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed">
+                                    <TextBlock Text="&#xE783;" Style="{StaticResource Glyph}" FontSize="24" Foreground="{StaticResource Danger}"/>
+                                    <TextBlock Text="This shader does not compile" Foreground="{StaticResource Text2}" Margin="0,8,0,0"/>
+                                </StackPanel>
+                                <!-- shown over the card's picture while the selected shader is still compiling -->
+                                <Border x:Name="PreviewBusy" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,12"
+                                        Background="#D9101012" CornerRadius="11" Height="22" Padding="10,0,10,1">
+                                    <TextBlock Text="Compiling…" FontSize="11.5" Foreground="{StaticResource Text}" VerticalAlignment="Center"/>
+                                </Border>
+                            </Grid>
+
+                            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,8,0,0">
+                                <StackPanel Margin="24,10,24,24">
+                                    <TextBlock x:Name="NameText" FontFamily="{StaticResource UiDisplay}" FontSize="22" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock x:Name="FileText" Foreground="{StaticResource Text3}" FontSize="12" Margin="1,3,0,0" TextTrimming="CharacterEllipsis"/>
+
+                                    <StackPanel x:Name="DisplaysBlock" Margin="0,20,0,0">
+                                        <TextBlock Text="DISPLAYS" Style="{StaticResource Caption}"/>
+                                        <Border Style="{StaticResource SegHost}">
+                                            <UniformGrid Rows="1">
+                                                <RadioButton x:Name="ModeDuplicate" Style="{StaticResource Seg}" GroupName="mode" Content="Duplicate" ToolTip="The same shader on every display" Click="Mode_Click"/>
+                                                <RadioButton x:Name="ModePer" Style="{StaticResource Seg}" GroupName="mode" Content="Per display" ToolTip="A different shader on each display" Click="Mode_Click"/>
+                                                <RadioButton x:Name="ModeSpan" Style="{StaticResource Seg}" GroupName="mode" Content="Span" ToolTip="One image across all displays" Click="Mode_Click"/>
+                                            </UniformGrid>
+                                        </Border>
+                                        <ui:MonitorPicker x:Name="Picker" Height="72" Margin="0,12,0,0"/>
+                                        <TextBlock x:Name="PickerHint" Style="{StaticResource RowHint}" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                                    </StackPanel>
+
+                                    <Button x:Name="ApplyBtn" Style="{StaticResource Primary}" Content="Set as wallpaper" Margin="0,20,0,0" Click="Apply_Click"/>
+                                    <UniformGrid Rows="1" Margin="-4,8,-4,0">
+                                        <Button x:Name="TermBtn" Margin="4,0" Padding="4,0" Click="Terminal_Click" ToolTip="Use this shader as the Windows Terminal background effect">
+                                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE756;" Style="{StaticResource Glyph}" Margin="0,1,7,0"/><TextBlock Text="Terminal"/></StackPanel>
+                                        </Button>
+                                        <Button x:Name="EditBtn" Margin="4,0" Padding="4,0" Click="Edit_Click" ToolTip="Open the .hlsl in your editor; saving reloads it live">
+                                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE70F;" Style="{StaticResource Glyph}" Margin="0,1,7,0"/><TextBlock Text="Edit"/></StackPanel>
+                                        </Button>
+                                        <Button x:Name="DeleteBtn" Margin="4,0" Padding="4,0" Click="Delete_Click" ToolTip="Move to the Recycle Bin (Del)">
+                                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE74D;" Style="{StaticResource Glyph}" Margin="0,1,7,0" Foreground="{StaticResource Danger}"/><TextBlock Text="Delete" Foreground="{StaticResource Danger}"/></StackPanel>
+                                        </Button>
+                                    </UniformGrid>
+
+                                    <Border x:Name="ErrorCard" Visibility="Collapsed" Margin="0,20,0,0" Background="#1FFF6B5E" BorderBrush="#4DFF6B5E" BorderThickness="1" CornerRadius="10" Padding="14,12">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="&#xE783;" Style="{StaticResource Glyph}" Foreground="{StaticResource Danger}" Margin="0,1,8,0"/>
+                                                <TextBlock x:Name="ErrorTitle" Text="Compile error" FontWeight="SemiBold"/>
+                                            </StackPanel>
+                                            <TextBlock x:Name="ErrorText" FontFamily="{StaticResource Mono}" FontSize="11.5" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- what the performance fitter did to this shader (built in code) -->
+                                    <StackPanel x:Name="FitNote" Margin="0,16,0,0" Visibility="Collapsed"/>
+
+                                    <!-- web wallpapers: mute, interact, reload (built in code) -->
+                                    <StackPanel x:Name="WebBlock" Margin="0,24,0,0" Visibility="Collapsed"/>
+
+                                    <!-- shaders: one control per #define -->
+                                    <StackPanel x:Name="PropsBlock">
+                                        <Grid Margin="0,24,0,0">
+                                            <TextBlock Text="PROPERTIES" Style="{StaticResource Caption}" VerticalAlignment="Bottom"/>
+                                            <Button x:Name="ResetBtn" Style="{StaticResource Ghost}" Content="Reset" Height="24" Padding="8,0" FontSize="12" HorizontalAlignment="Right" Margin="0,0,-4,4"/>
+                                        </Grid>
+                                        <Border x:Name="PropsGroup" Style="{StaticResource Group}" Margin="0">
+                                            <StackPanel x:Name="PropsPanel"/>
+                                        </Border>
+                                        <TextBlock x:Name="NoProps" Text="This shader has no adjustable #define values." Foreground="{StaticResource Text3}" FontSize="12" Margin="2,0,0,0" Visibility="Collapsed"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+
+                        <!-- ============================== settings (slides over the detail) -->
+                        <Grid x:Name="SettingsPane" Visibility="Collapsed">
+                            <Grid.RenderTransform><TranslateTransform/></Grid.RenderTransform>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Grid Margin="24,6,16,0">
+                                <TextBlock Text="Settings" FontFamily="{StaticResource UiDisplay}" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <Button Style="{StaticResource IconBtn}" Content="&#xE711;" FontSize="12" Width="32" Height="32" HorizontalAlignment="Right" ToolTip="Close settings (Esc)" Click="SettingsClose_Click" WindowChrome.IsHitTestVisibleInChrome="True"/>
+                            </Grid>
+                            <Border Grid.Row="1" Style="{StaticResource SegHost}" Margin="24,14,24,0">
+                                <UniformGrid Rows="1">
+                                    <RadioButton x:Name="TabPerf" Style="{StaticResource Seg}" GroupName="tab" Content="Performance" IsChecked="True" Click="Tab_Click"/>
+                                    <RadioButton x:Name="TabDisplays" Style="{StaticResource Seg}" GroupName="tab" Content="Displays" Click="Tab_Click"/>
+                                    <RadioButton x:Name="TabFilters" Style="{StaticResource Seg}" GroupName="tab" Content="Filters" Click="Tab_Click"/>
+                                    <RadioButton x:Name="TabGeneral" Style="{StaticResource Seg}" GroupName="tab" Content="General" Click="Tab_Click"/>
+                                </UniformGrid>
+                            </Border>
+                            <ScrollViewer x:Name="SettingsScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,12,0,0">
+                                <Grid Margin="24,8,24,24">
+                                    <StackPanel x:Name="PagePerf"/>
+                                    <StackPanel x:Name="PageDisplays" Visibility="Collapsed"/>
+                                    <StackPanel x:Name="PageFilters" Visibility="Collapsed"/>
+                                    <StackPanel x:Name="PageGeneral" Visibility="Collapsed"/>
+                                </Grid>
+                            </ScrollViewer>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ============================================================ overlays -->
+        <Grid x:Name="DropOverlay" Visibility="Collapsed" Opacity="0" Background="#CC0E0E11" IsHitTestVisible="False">
+            <Rectangle Margin="20" RadiusX="16" RadiusY="16" Stroke="{StaticResource Accent}" StrokeThickness="2" StrokeDashArray="5 4" Fill="#14FF963C"/>
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <TextBlock Text="&#xE896;" Style="{StaticResource Glyph}" FontSize="40" Foreground="{StaticResource Accent}"/>
+                <TextBlock Text="Drop to add to your library" FontFamily="{StaticResource UiDisplay}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,18,0,0"/>
+                <TextBlock Text="HLSL pixel shaders (.hlsl)" Foreground="{StaticResource Text2}" HorizontalAlignment="Center" Margin="0,6,0,0"/>
+            </StackPanel>
+        </Grid>
+
+        <Grid x:Name="DialogOverlay" Visibility="Collapsed" Opacity="0" Background="#99000000" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Border Width="400" VerticalAlignment="Center" HorizontalAlignment="Center" Background="#FF26262A" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="14" Padding="24,22,24,20">
+                <Border.Effect><DropShadowEffect BlurRadius="40" ShadowDepth="12" Direction="270" Opacity="0.5" Color="Black"/></Border.Effect>
+                <StackPanel>
+                    <TextBlock x:Name="DialogTitle" FontFamily="{StaticResource UiDisplay}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="DialogText" Foreground="{StaticResource Text2}" TextWrapping="Wrap" Margin="0,8,0,0" LineHeight="19"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+                        <Button x:Name="DialogCancel" Content="Cancel" MinWidth="88" Click="DialogCancel_Click"/>
+                        <Button x:Name="DialogOk" Style="{StaticResource DangerBtn}" Content="Delete" MinWidth="88" Margin="8,0,0,0" Click="DialogOk_Click"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

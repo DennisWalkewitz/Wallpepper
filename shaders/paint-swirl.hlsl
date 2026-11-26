@@ -1,0 +1,131 @@
+// @name: Paint Swirl
+// @tags: abstract, calming, featured
+// Three colours of thick, glossy paint stirred slowly around the middle of the screen: folding bands,
+// soft wet highlights, optional chunky pixels. Every colour and every motion is adjustable.
+
+Texture2D shaderTexture;
+SamplerState samplerState;
+cbuffer PixelShaderSettings {
+    float  Time;
+    float  Scale;
+    float2 Resolution;
+    float4 Background;
+};
+
+#define SPIN_SPEED 1.0        // how fast the whole picture turns
+#define FLOW_SPEED 1.0        // how fast the paint folds into itself
+#define SWIRL 1.0             // how tightly the middle is wound up
+#define ZOOM 1.0              // size of the pattern (higher = closer)
+#define FOLDS 5               // how many times the paint is folded (2..8, more = finer detail)
+#define FOLD_STRENGTH 1.0     // how far each fold pushes the paint
+#define BAND_SHARPNESS 0.90   // 0 = soft blends, 1 = hard edges between the colours
+#define BALANCE 0.0           // shifts the mix towards the first (-1) or third (+1) colour
+#define GLOSS 0.6             // wet highlights along the ridges
+#define RELIEF 0.5            // shading that makes the paint look thick
+#define PIXEL_SIZE 0.0        // 0 = smooth; larger values draw chunky pixels of this size
+#define COLOUR_1_R 0.87       // first colour: red
+#define COLOUR_1_G 0.20       // first colour: green
+#define COLOUR_1_B 0.22       // first colour: blue
+#define COLOUR_2_R 0.05       // second colour: red
+#define COLOUR_2_G 0.42       // second colour: green
+#define COLOUR_2_B 0.78       // second colour: blue
+#define COLOUR_3_R 0.04       // third colour: red
+#define COLOUR_3_G 0.07       // third colour: green
+#define COLOUR_3_B 0.11       // third colour: blue
+#define HUE_SHIFT 0.0         // rotates all colours around the colour wheel (0..1)
+#define HUE_CYCLE 0.0         // speed at which the colours keep rotating by themselves
+#define SATURATION 1.0        // 0 = grey, 1 = as chosen, 2 = vivid
+#define CONTRAST 1.0          // overall contrast
+#define BRIGHTNESS 1.0        // overall brightness
+#define CENTRE_X 0.5          // horizontal position of the middle of the swirl
+#define CENTRE_Y 0.5          // vertical position of the middle of the swirl
+#define VIGNETTE 0.35         // darkening towards the corners
+#define TEXT_VEIL 0.5         // darkening behind terminal text
+
+float hash12(float2 p)
+{
+    float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+
+float3 hueRotate(float3 c, float turns)
+{
+    float a = turns * 6.2831853;
+    float3 k = float3(0.57735, 0.57735, 0.57735);
+    float ca = cos(a), sa = sin(a);
+    return c * ca + cross(k, c) * sa + k * dot(k, c) * (1.0 - ca);
+}
+
+// the stirred paint: returns a value that wanders between -1 and 1
+float paint(float2 uv, float t)
+{
+    float r = length(uv);
+    float wind = SWIRL * 3.0 / (0.30 + r * 1.9) + t * 0.11 * SPIN_SPEED;          // wound up more towards the middle
+    float cw = cos(wind), sw = sin(wind);
+    float2 p = float2(cw * uv.x - sw * uv.y, sw * uv.x + cw * uv.y) * 5.5 / max(ZOOM, 0.05);
+
+    float ft = t * 0.23 * FLOW_SPEED;
+    for (int i = 1; i <= FOLDS; i++)
+    {
+        float fi = float(i);
+        float2 q = float2(sin(p.y * (0.55 + 0.21 * fi) + ft * (0.7 + 0.13 * fi) + 1.7 * fi),
+                          cos(p.x * (0.50 + 0.24 * fi) - ft * (0.6 + 0.11 * fi) + 2.3 * fi));
+        p += q * FOLD_STRENGTH * 1.25 / (0.6 + 0.4 * fi);
+    }
+    return sin(p.x * 0.9 + 0.6 * sin(p.y * 0.7 + ft)) * 0.6 + sin(p.y * 1.1 - 0.5 * cos(p.x * 0.6 - ft * 0.8)) * 0.4;
+}
+
+float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+{
+    float aspect = Resolution.x / Resolution.y;
+    float t = Time;
+
+    float2 st = tex;
+    if (PIXEL_SIZE > 0.5)
+    {
+        float2 cells = Resolution / (PIXEL_SIZE * max(Scale, 0.5));
+        st = (floor(tex * cells) + 0.5) / cells;
+    }
+    float2 uv = float2((st.x - CENTRE_X) * aspect, st.y - CENTRE_Y);
+
+    float e = 0.004;
+    float v = paint(uv, t);
+    float2 grad = float2(paint(uv + float2(e, 0.0), t) - v, paint(uv + float2(0.0, e), t) - v) / e;
+
+    // three colours in bands; sharpness decides how hard the edges between them are
+    float3 c1 = float3(COLOUR_1_R, COLOUR_1_G, COLOUR_1_B);
+    float3 c2 = float3(COLOUR_2_R, COLOUR_2_G, COLOUR_2_B);
+    float3 c3 = float3(COLOUR_3_R, COLOUR_3_G, COLOUR_3_B);
+    float w = lerp(0.06, 0.0012, saturate(BAND_SHARPNESS));       // edge width, as a distance on screen
+    float m = v + BALANCE * 0.6;
+    float slope = max(length(grad), 0.35);
+    float a12 = smoothstep(-w, w, (m + 0.28) / slope);
+    float a23 = smoothstep(-w, w, (m - 0.30) / slope);
+    float3 col = lerp(lerp(c1, c2, a12), c3, a23);
+
+    // thick paint: a light from the upper left shades the ridges and leaves wet highlights
+    float3 n = normalize(float3(-grad.x * 0.05 * RELIEF, -grad.y * 0.05 * RELIEF, 1.0));
+    float3 l = normalize(float3(-0.45, -0.55, 0.70));
+    float diff = saturate(dot(n, l));
+    col *= lerp(1.0, 0.55 + 0.65 * diff, saturate(RELIEF));
+    float3 hv = normalize(l + float3(0.0, 0.0, 1.0));
+    col += float3(1.0, 1.0, 1.0) * pow(saturate(dot(n, hv)), 40.0) * 0.30 * GLOSS * saturate(length(grad) * 0.08);
+
+    col = hueRotate(col, HUE_SHIFT + t * 0.02 * HUE_CYCLE);
+    float grey = dot(col, float3(0.299, 0.587, 0.114));
+    col = lerp(float3(grey, grey, grey), col, SATURATION);
+    col = (col - 0.5) * CONTRAST + 0.5;
+    col *= BRIGHTNESS;
+    float2 vc = tex - 0.5;
+    col *= 1.0 - dot(vc, vc) * VIGNETTE * 1.6;
+    col = max(col, float3(0.0, 0.0, 0.0));
+
+    float4 fg = shaderTexture.Sample(samplerState, tex);
+    float2 o = 2.0 * Scale / Resolution;
+    float cover = max(fg.a, max(shaderTexture.Sample(samplerState, tex + o).a, shaderTexture.Sample(samplerState, tex - o).a));
+    col *= 1.0 - TEXT_VEIL * cover;
+    col = col * (1.0 - fg.a) + fg.rgb;
+    col += (hash12(tex * Resolution) - 0.5) / 255.0;
+    return float4(saturate(col), 1.0);
+}

@@ -1,0 +1,296 @@
+// @name: Gargantua
+// @tags: space, featured
+// @light: STEPS=70
+// Black hole with a hot accretion disk, Interstellar style.
+// Camera rays are bent around a Schwarzschild mass (r_s = 1): the far side of the disk appears as the arch
+// over the top and as the arc under the shadow, with a thin photon ring at the critical impact parameter.
+// The disk is a thick, layered sheet of streaky gas in Keplerian rotation (inner faster), with relativistic
+// Doppler beaming (approaching side white-hot, receding side deep orange), gravitational redshift, glow and haze.
+// Windows Terminal: text stays on top (alpha composite) with a soft veil behind it.
+
+Texture2D shaderTexture;
+SamplerState samplerState;
+cbuffer PixelShaderSettings {
+    float  Time;
+    float  Scale;
+    float2 Resolution;
+    float4 Background;
+};
+
+// ---- settings ---------------------------------------------------------------------------------
+#define STEPS 110             // ray-march steps (quality vs. cost)
+#define BH_POS_X 0.60         // shadow centre, 0..1 of window width
+#define BH_POS_Y 0.47         // shadow centre, 0..1 of window height (from top)
+#define BH_SIZE 0.34          // shadow diameter as fraction of window height
+#define DISK_TILT 7.0         // degrees the camera sits above the disk plane
+#define DISK_ROLL 14.0        // on-screen roll of the disk in degrees
+#define DISK_INNER 2.6        // inner disk radius (Schwarzschild radii)
+#define DISK_OUTER 19.0       // outer disk radius (Schwarzschild radii)
+#define DISK_THICKNESS 1.0    // how puffy the disk is
+#define ROTATION_SPEED 1.0    // disk rotation speed
+#define STREAKS 1.0           // fine orbital streaks (0 = smooth disk)
+#define TURBULENCE 1.0        // large clumps and gaps
+#define HEAT 1.0              // disk temperature: lower = redder, higher = whiter
+#define DOPPLER 2.2           // bright approaching side vs. dim receding side
+#define GLOW 1.0              // bloom around the disk and the shadow
+#define RING_INTENSITY 1.6    // photon ring brightness
+#define HAZE 1.0              // warm dust haze in the background
+#define STAR_BRIGHTNESS 1.0   // background stars
+#define EXPOSURE 1.0          // overall exposure
+#define SATURATION 1.0        // colour saturation
+#define TEXT_VEIL 0.55        // darkening behind terminal text (0..1)
+#define PROMPT_SHADE 0.35     // keeps the left/bottom-left (prompt area) darker
+
+static const float CAM_DIST = 22.0;
+static const float R_ESCAPE = 27.0;
+static const float B_CRIT = 2.598076;     // 3*sqrt(3)/2
+static const float FLOW_PERIOD = 14.0;
+static const float OMEGA0 = 0.9;
+static const float TWO_PI = 6.2831853;
+
+// ---- hashing / noise (float-only, identical on every GPU) ----------------------------------------
+float hash12(float2 p)
+{
+    float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+
+float hash13(float3 p)
+{
+    float3 p3 = frac(p * 0.1031);
+    p3 += dot(p3, p3.zxy + 31.32);
+    return frac((p3.x + p3.y) * p3.z);
+}
+
+float3 hash33(float3 p)
+{
+    float3 p3 = frac(p * float3(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, p3.yxz + 33.33);
+    return frac((p3.xxy + p3.yxx) * p3.zyx);
+}
+
+float modp(float x, float m) { return x - m * floor(x / m); }
+
+float vnoise(float2 p)
+{
+    float2 i = floor(p), f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(hash12(i), hash12(i + float2(1.0, 0.0)), f.x), lerp(hash12(i + float2(0.0, 1.0)), hash12(i + float2(1.0, 1.0)), f.x), f.y);
+}
+
+// value noise, periodic in v (no seam where the disk angle wraps)
+float vnoiseP(float u, float v, float period)
+{
+    float iu = floor(u), iv = floor(v);
+    float fu = u - iu, fv = v - iv;
+    fu = fu * fu * (3.0 - 2.0 * fu);
+    fv = fv * fv * (3.0 - 2.0 * fv);
+    float v0 = modp(iv, period), v1 = modp(iv + 1.0, period);
+    float a = hash12(float2(iu, v0)), b = hash12(float2(iu + 1.0, v0));
+    float c = hash12(float2(iu, v1)), d = hash12(float2(iu + 1.0, v1));
+    return lerp(lerp(a, b, fu), lerp(c, d, fu), fv);
+}
+
+// gas density in (log r, orbital turns): big clumps, mid turbulence and many thin concentric streaks.
+// dlr = pixel footprint in log r; octaves finer than that fade out (no shimmer).
+float gas(float lr, float turns, float seed, float dlr)
+{
+    float clump = vnoiseP(lr * 2.6 + seed, turns * 3.0, 3.0);
+    float mid = vnoiseP(lr * 8.0 + seed * 1.7, turns * 10.0, 10.0);
+    float f1 = vnoiseP(lr * 30.0 + seed * 2.3, turns * 5.0, 5.0);
+    float f2 = vnoiseP(lr * 84.0 + seed * 3.1, turns * 12.0, 12.0);
+    float w1 = saturate(1.6 - 30.0 * dlr * 2.5);
+    float w2 = saturate(1.6 - 84.0 * dlr * 2.5);
+    float fine = lerp(0.5, f1, w1) * 0.55 + lerp(0.5, f2, w2) * 0.45;
+    float big = lerp(1.0, (0.10 + 0.90 * clump) * (0.20 + 0.80 * mid * mid) * 3.0, saturate(TURBULENCE));
+    float thin = lerp(1.0, 0.04 + 3.4 * fine * fine * fine, saturate(STREAKS));
+    return big * thin;
+}
+
+float3 heatColor(float h)
+{
+    float3 c = lerp(float3(0.45, 0.04, 0.01), float3(1.0, 0.30, 0.05), saturate(h * 2.2));
+    c = lerp(c, float3(1.0, 0.70, 0.34), saturate(h * 2.2 - 1.0));
+    c = lerp(c, float3(0.95, 0.96, 1.0), saturate(h * 1.2 - 1.0));
+    return c;
+}
+
+// one sheet of the disk at point p; returns emitted colour (rgb) and opacity (a)
+float4 diskLayer(float3 p, float3 vdir, float mu, float seed, float pixAng, float3 cam)
+{
+    float r = length(p.xz);
+    if (r < DISK_INNER * 0.8 || r > DISK_OUTER) return float4(0.0, 0.0, 0.0, 0.0);
+    float lr = log(r);
+    float base = atan2(p.z, p.x) / TWO_PI;
+    float omega = ROTATION_SPEED * OMEGA0 * pow(DISK_INNER / r, 1.5);        // Keplerian: inner faster
+    float dlr = length(p - cam) * pixAng / (max(mu, 0.06) * r);
+
+    // two flow phases, each reset every FLOW_PERIOD and cross-faded: the shear never winds up, no jumps
+    float ta = frac(Time / FLOW_PERIOD);
+    float tb = frac(Time / FLOW_PERIOD + 0.5);
+    float wa = 1.0 - abs(2.0 * ta - 1.0);
+    float wb = 1.0 - wa;
+    float na = gas(lr, base - omega * (ta - 0.5) * FLOW_PERIOD / TWO_PI, seed, dlr);
+    float nb = gas(lr, base - omega * (tb - 0.5) * FLOW_PERIOD / TWO_PI, seed + 41.7, dlr);
+    float n = max((na * wa + nb * wb - 0.6) / sqrt(wa * wa + wb * wb) + 0.6, 0.0);
+
+    float x = DISK_INNER / r;
+    float inner = smoothstep(DISK_INNER * 0.85, DISK_INNER * 1.2, r);
+    float outer = 1.0 - smoothstep(DISK_OUTER * 0.45, DISK_OUTER, r);
+    float dens = n * inner * outer;
+
+    float beta = min(sqrt(0.5 / max(r - 1.0, 0.5)), 0.85);                   // orbital speed
+    float3 tang = float3(-p.z, 0.0, p.x) / r;
+    float g = sqrt(1.0 - beta * beta) / (1.0 - beta * dot(tang, -vdir));    // Doppler factor
+    float gt = g * sqrt(saturate(1.0 - 1.0 / r));                            // with gravitational redshift
+
+    float prof = pow(x, 2.6) * 5.5 + pow(x, 1.1) * 0.22;                     // hot core, long faint skirt
+    float thick = min(1.0 / max(mu, 0.05), 6.0) * 0.30;                      // edge-on = longer path = brighter
+    float inten = prof * dens * pow(gt, DOPPLER) * thick;
+    float heat = (0.10 + 1.25 * pow(x, 1.0)) * pow(gt, 1.8) * HEAT;
+    float alpha = saturate(dens * (0.12 + 1.6 * x) * (0.4 + thick));
+    return float4(heatColor(heat) * inten, alpha);
+}
+
+float3 stars(float3 d)
+{
+    float3 p = d * 190.0;
+    float3 cell = floor(p);
+    float h = hash13(cell);
+    float3 o = hash33(cell + 13.0);
+    float dist = length(frac(p) - (0.25 + 0.5 * o));
+    float s = 1.0 - smoothstep(0.0, 0.30, dist);
+    float on = h > 0.9965 ? 1.0 : 0.0;
+    float3 tint = lerp(float3(1.0, 0.72, 0.50), float3(0.70, 0.82, 1.0), o.z);
+    return tint * (on * s * s * (0.1 + 0.9 * o.x * o.x));
+}
+
+float3 aces(float3 x)
+{
+    return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
+}
+
+float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+{
+    float aspect = Resolution.x / Resolution.y;
+    float px = (tex.x - BH_POS_X) * aspect;
+    float py = -(tex.y - BH_POS_Y);
+    float ro = radians(DISK_ROLL);
+    float qx = cos(ro) * px + sin(ro) * py;
+    float qy = -sin(ro) * px + cos(ro) * py;
+
+    float tilt = radians(DISK_TILT);
+    float3 cam = float3(0.0, CAM_DIST * sin(tilt), -CAM_DIST * cos(tilt));
+    float3 fwd = float3(0.0, -sin(tilt), cos(tilt));
+    float3 right = float3(1.0, 0.0, 0.0);
+    float3 up = cross(fwd, right);
+    float k = B_CRIT / (0.5 * BH_SIZE) / CAM_DIST;
+    float pixAng = k / Resolution.y;
+    float3 d = normalize(fwd + qx * k * right + qy * k * up);
+
+    float3 x = cam;
+    float3 v = d;
+    float3 hv = cross(x, v);
+    float h2 = dot(hv, hv);
+    float hb = sqrt(h2);                                                     // impact parameter
+
+    float3 col = float3(0.0, 0.0, 0.0);
+    float alpha = 0.0;
+    bool escaped = false;
+
+    [loop]
+    for (int i = 0; i < STEPS; i++)
+    {
+        float r2 = dot(x, x);
+        float r = sqrt(r2);
+        float dt = min(clamp(0.045 * r2, 0.03, 3.0), 0.45 + 0.7 * abs(x.y));  // small near the hole and the disk
+        float3 acc = (-1.5 * h2 / (r2 * r2 * r)) * x;
+        float3 vn = v + acc * dt;
+        float3 xn = x + vn * dt;
+        if (x.y * xn.y < 0.0)                                                // crossed the disk plane
+        {
+            float s = x.y / (x.y - xn.y);
+            float3 xc = x + (xn - x) * s;
+            float rc = length(xc.xz);
+            if (rc > DISK_INNER * 0.7 && rc < DISK_OUTER * 1.05)
+            {
+                float3 vd = normalize(vn);
+                float mu = abs(vd.y);
+                // the disk has thickness: two sheets above and below the plane, entered one after the other
+                float3 off = vd * ((0.010 * rc + 0.02) * DISK_THICKNESS / max(mu, 0.07));
+                float4 e1 = diskLayer(xc - off, vd, mu, 0.0, pixAng, cam);
+                float4 e2 = diskLayer(xc + off, vd, mu, 17.3, pixAng, cam);
+                float w = 1.0 - alpha;
+                col += e1.rgb * w * 0.6;
+                alpha += w * e1.a * 0.6;
+                w = 1.0 - alpha;
+                col += e2.rgb * w * 0.6;
+                alpha += w * e2.a * 0.6;
+            }
+        }
+        x = xn;
+        v = vn;
+        float rn2 = dot(x, x);
+        if (rn2 < 1.0) break;                                                // captured
+        if (rn2 > R_ESCAPE * R_ESCAPE) { escaped = true; break; }
+        if (alpha > 0.98) break;
+    }
+
+    // screen-space helpers: u,v in shadow radii, rs = distance from the shadow centre
+    float su = qx / (0.5 * BH_SIZE);
+    float sv = qy / (0.5 * BH_SIZE);
+    float rs = sqrt(su * su + sv * sv);
+    float side = 1.0 - 0.55 * su / sqrt(1.0 + su * su);                      // approaching side is brighter
+
+    // background: lensed stars + warm dust haze
+    float3 bg = float3(0.0, 0.0, 0.0);
+    if (escaped)
+    {
+        bg += stars(normalize(v)) * STAR_BRIGHTNESS;
+    }
+    float dust = 0.55 + 0.45 * vnoise(float2(px, py) * 2.2 + 3.0) * vnoise(float2(px, py) * 5.1 - 7.0) * 2.0;
+    float3 haze = float3(0.050, 0.022, 0.008) * (exp(-rs * 0.30) * 0.9 + 0.08) * dust * HAZE;
+    col += (bg + haze * (escaped ? 1.0 : 0.25)) * (1.0 - alpha);
+
+    // photon ring at the critical impact parameter
+    float ringw = B_CRIT / (0.5 * BH_SIZE) / Resolution.y * 1.5;
+    float distb = hb - B_CRIT;
+    float ring = exp(-(distb / ringw) * (distb / ringw)) + (distb > 0.0 ? 0.22 * exp(-distb / (ringw * 5.0)) : 0.0);
+    col += float3(1.0, 0.88, 0.72) * ring * RING_INTENSITY * side * (1.0 - alpha * 0.7);
+
+    // bloom: along the disk (a tilted line through the hole) and around the shadow
+    float along = exp(-abs(su) * 0.16);
+    float lineGlow = exp(-abs(sv + 0.10) * 1.5) * along + 0.5 * exp(-abs(sv + 0.10) * 0.5) * along * along;
+    float halo = exp(-max(rs - 1.0, 0.0) * 1.1) * smoothstep(0.85, 1.15, rs) + 0.35 * exp(-max(rs - 1.0, 0.0) * 0.35);
+    float inShadow = 1.0 - 0.85 * (1.0 - smoothstep(0.8, 1.05, rs));
+    col += float3(1.0, 0.42, 0.12) * (lineGlow * 0.07 + halo * 0.07) * side * side * inShadow * GLOW;
+
+    // tonemap + grade
+    col *= 0.95 * EXPOSURE;
+    float3 cc = aces(col);
+    float lum = dot(cc, float3(0.299, 0.587, 0.114));
+    cc = lerp(float3(lum, lum, lum), cc, SATURATION * 1.15) * float3(1.04, 0.97, 0.88);
+    cc = cc * cc * (3.0 - 2.0 * cc) * 0.35 + cc * 0.65;                         // a little contrast
+    cc = pow(saturate(cc), float3(0.4545, 0.4545, 0.4545));
+    float2 vc = tex - 0.5;
+    float vig = 1.0 - dot(vc, vc) * 0.55;
+    vig *= 1.0 - PROMPT_SHADE * saturate((0.5 - tex.x) * 1.3) * saturate(0.3 + tex.y);
+    cc *= vig;
+
+    // terminal text on top: transparent where there is no text (premultiplied alpha)
+    float4 fg = shaderTexture.Sample(samplerState, tex);
+    float2 o = 3.0 * Scale / Resolution;
+    float cover = fg.a;
+    cover = max(cover, shaderTexture.Sample(samplerState, tex + float2(o.x, 0.0)).a);
+    cover = max(cover, shaderTexture.Sample(samplerState, tex - float2(o.x, 0.0)).a);
+    cover = max(cover, shaderTexture.Sample(samplerState, tex + float2(0.0, o.y)).a);
+    cover = max(cover, shaderTexture.Sample(samplerState, tex - float2(0.0, o.y)).a);
+    cover = max(cover, 0.85 * shaderTexture.Sample(samplerState, tex + 1.6 * o).a);
+    cover = max(cover, 0.85 * shaderTexture.Sample(samplerState, tex - 1.6 * o).a);
+    cc *= 1.0 - TEXT_VEIL * cover;
+    cc = cc * (1.0 - fg.a) + fg.rgb;
+
+    cc += (hash12(tex * Resolution) - 0.5) / 255.0;                           // dither: no banding
+    return float4(saturate(cc), 1.0);
+}

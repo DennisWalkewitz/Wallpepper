@@ -1,0 +1,113 @@
+// @name: Snowfall
+// @tags: nature, calming
+// Quiet snowfall at blue hour: soft flakes in several depth layers drifting in the wind over snowy hills
+// with a line of pines and a warm glow on the horizon.
+
+Texture2D shaderTexture;
+SamplerState samplerState;
+cbuffer PixelShaderSettings {
+    float  Time;
+    float  Scale;
+    float2 Resolution;
+    float4 Background;
+};
+
+#define SNOW_AMOUNT 1.0       // number of flakes (0..2)
+#define FLAKE_SIZE 1.0        // flake size
+#define FALL_SPEED 1.0        // falling speed
+#define WIND 0.3              // sideways drift (-1 = left, 1 = right)
+#define SWAY 1.0              // how much flakes wobble
+#define LAYERS 5              // depth layers (2..7)
+#define DEPTH_BLUR 1.0        // near flakes are larger and softer
+#define SKY_TOP_R 0.05        // sky top: red
+#define SKY_TOP_G 0.08        // sky top: green
+#define SKY_TOP_B 0.18        // sky top: blue
+#define GLOW_R 0.85           // horizon glow: red
+#define GLOW_G 0.50           // horizon glow: green
+#define GLOW_B 0.45           // horizon glow: blue
+#define HORIZON_GLOW 0.6      // strength of the horizon glow
+#define HILLS 1.0             // snowy hills and pines (0 = sky only)
+#define BRIGHTNESS 1.0        // overall brightness
+#define TEXT_VEIL 0.5         // darkening behind terminal text
+
+float hash12(float2 p)
+{
+    float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+
+float vnoise(float2 p)
+{
+    float2 i = floor(p), f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(hash12(i), hash12(i + float2(1, 0)), f.x), lerp(hash12(i + float2(0, 1)), hash12(i + float2(1, 1)), f.x), f.y);
+}
+
+float snowLayer(float2 p, float depth, float t)
+{
+    float scale = lerp(26.0, 5.0, depth);                               // near layers: bigger cells
+    float speed = lerp(0.05, 0.22, depth) * FALL_SPEED;
+    float2 g = p * scale + float2(-WIND * t * speed * scale * 1.5, t * speed * scale);
+    g.x += sin(g.y * 0.7 + depth * 20.0 + t * 0.6) * 0.35 * SWAY;
+    float2 id = floor(g);
+    float h = hash12(id + depth * 77.0);
+    if (h > 0.5 * SNOW_AMOUNT) return 0.0;
+    float2 c = 0.25 + 0.5 * float2(hash12(id + 1.3), hash12(id + 2.9));
+    float d = length(frac(g) - c);
+    float r = (0.05 + 0.07 * hash12(id + 5.0)) * FLAKE_SIZE;
+    float soft = lerp(0.3, 1.0, depth * DEPTH_BLUR);
+    return (1.0 - smoothstep(r * (1.0 - soft), r * (1.0 + soft * 0.6), d)) * lerp(0.35, 0.9, depth);
+}
+
+float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+{
+    float aspect = Resolution.x / Resolution.y;
+    float2 p = float2(tex.x * aspect, tex.y);                           // y down
+    float up = 1.0 - tex.y;
+    float t = Time;
+
+    float3 skyTop = float3(SKY_TOP_R, SKY_TOP_G, SKY_TOP_B);
+    float3 glow = float3(GLOW_R, GLOW_G, GLOW_B);
+    float3 col = lerp(skyTop * 2.2, skyTop, smoothstep(0.0, 0.9, up));
+    col += glow * exp(-max(up - 0.28, 0.0) * 6.0) * 0.35 * HORIZON_GLOW;
+    col += skyTop * vnoise(float2(p.x * 1.2 + t * 0.01, up * 3.0)) * 0.5;   // soft clouds
+
+    if (HILLS > 0.0)
+    {
+        // far hill
+        float h1 = 0.30 + 0.05 * vnoise(float2(p.x * 1.1, 3.0)) + 0.02 * vnoise(float2(p.x * 4.0, 7.0));
+        col = lerp(col, skyTop * 2.6 + glow * 0.10 * HORIZON_GLOW, 1.0 - smoothstep(h1 - 0.003, h1 + 0.003, up));
+        // pines on the far hill
+        float tx = p.x * 22.0;
+        float tid = floor(tx);
+        float tf = frac(tx) - 0.5;
+        float th = (0.02 + 0.05 * hash12(float2(tid, 4.0))) * step(0.45, hash12(float2(tid, 9.0)));
+        float pine = step(up, h1 + th * (1.0 - abs(tf) * 2.4)) * step(h1 - 0.01, up);
+        col = lerp(col, skyTop * 0.5, pine);
+        // near hill: brighter snow with gentle shading
+        float h2 = 0.16 + 0.06 * vnoise(float2(p.x * 0.7 + 5.0, 1.0)) + 0.015 * vnoise(float2(p.x * 3.0, 2.0));
+        float snowShade = 0.75 + 0.25 * vnoise(float2(p.x * 3.0, up * 12.0));
+        col = lerp(col, (skyTop * 4.2 + float3(0.06, 0.07, 0.10)) * snowShade, 1.0 - smoothstep(h2 - 0.003, h2 + 0.003, up));
+    }
+
+    float flakes = 0.0;
+    for (int i = 0; i < LAYERS; i++)
+    {
+        float depth = (float(i) + 0.5) / float(LAYERS);
+        flakes += snowLayer(p + float(i) * 3.7, depth, t);
+    }
+    col += float3(0.85, 0.90, 1.0) * flakes * 0.8;
+
+    col = 1.0 - exp(-col * 1.5 * BRIGHTNESS);
+    float2 vc = tex - 0.5;
+    col *= 1.0 - dot(vc, vc) * 0.5;
+
+    float4 fg = shaderTexture.Sample(samplerState, tex);
+    float2 o = 2.0 * Scale / Resolution;
+    float cover = max(fg.a, max(shaderTexture.Sample(samplerState, tex + o).a, shaderTexture.Sample(samplerState, tex - o).a));
+    col *= 1.0 - TEXT_VEIL * cover;
+    col = col * (1.0 - fg.a) + fg.rgb;
+    col += (hash12(tex * Resolution) - 0.5) / 255.0;
+    return float4(saturate(col), 1.0);
+}

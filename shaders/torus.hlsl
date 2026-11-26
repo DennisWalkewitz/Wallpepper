@@ -1,0 +1,411 @@
+// @name: Torus
+// @tags: abstract
+// The view from inside a hollow metal ring: glowing coloured stripes wind along its curved wall and
+// slowly travel around it. Every half minute the picture fades to a new camera position and stripe count.
+#define WINDOWS_TERMINAL
+
+Texture2D shaderTexture;
+SamplerState samplerState;
+
+// --------------------
+#if defined(WINDOWS_TERMINAL)
+cbuffer PixelShaderSettings {
+  float  Time;
+  float  Scale;
+  float2 Resolution;
+  float4 Background;
+};
+
+#define TIME        (Time*SPEED)
+#define RESOLUTION  Resolution
+#else
+float time;
+float2 resolution;
+
+#define TIME        time
+#define RESOLUTION  resolution
+#endif
+// --------------------
+
+// ---- Wallpepper settings: every number below is a control in the app ----
+#define SCENE_LENGTH 30.0     // seconds until the picture fades to the next camera position (10..120)
+#define SCENE_FADE 2.0        // length of the fade to black between two scenes, in seconds (0.1..5)
+#define CAMERA_VIEW 4         // camera position: 4 = take turns, lower numbers = always the same one of the three (1..4)
+#define STRIPES_MAX 6         // each scene draws a random number of stripes, from one up to this many (2..12)
+#define STRIPE_SPEED 1.0      // how fast the stripes travel around the ring, negative = backwards (-8..8)
+#define STRIPE_WIDTH 0.01     // width of the bright core of every stripe (0..0.12)
+#define STRIPE_GLOW 0.0125    // strength of the glow around the stripes (0..0.06)
+#define TWIST 1.0             // how much the stripes wind around the tube (-4..4)
+#define COLOUR_SPEED 0.1      // how fast the stripes change colour (-1..1)
+#define HUE_SPREAD 0.125      // colour difference between neighbouring stripes (0..1)
+#define TUBE_THICKNESS 0.75   // thickness of the tube you are looking through (0.7..0.95)
+#define SHINE 4.0             // brightness of the highlights on the metal (0..12)
+#define GLOSS 10.0            // lower = wide soft highlights, higher = small sharp ones (2..60)
+#define DIFFUSE 0.125         // how much plain light the metal catches (0..1)
+#define SHADOW_DEPTH 0.1      // brightness inside the shadow the ring casts on itself: 0 = black, 1 = no shadow (0..1)
+#define METAL_R 0.1           // colour of the metal: red
+#define METAL_G 0.73          // colour of the metal: green
+#define METAL_B 1.0           // colour of the metal: blue
+// ---- picture, colour and text: these work the same in every wallpaper of the Hammster / mrange collection ----
+#define SPEED 1.0             // time scale of everything: 2 = twice as fast (every scene starts in black, so it cannot be frozen) (0.05..4)
+#define ZOOM 1.0              // magnify the picture: below 1 = wider view, above 1 = closer (0.25..4)
+#define OFFSET_X 0.0          // shift the picture sideways (-1..1)
+#define OFFSET_Y 0.0          // shift the picture up or down (-1..1)
+#define ROTATION 0.0          // turn the whole picture clockwise, in degrees (-180..180)
+#define SPIN 0.0              // keep turning the whole picture: clockwise turns per minute, negative = anticlockwise (-6..6)
+#define MIRROR 0              // 1 = kaleidoscope: the picture is mirrored into equal slices around the centre
+#define MIRROR_SEGMENTS 6     // number of kaleidoscope slices when MIRROR is on; 1 = plain left-right mirror (1..16)
+#define HUE_SHIFT 0.0         // rotate all colours around the colour wheel (0..1)
+#define HUE_CYCLE 0.0         // keep rotating the colours: full turns per minute (-6..6)
+#define SATURATION 1.0        // 0 = grey, 1 = original, 2 = vivid (0..2)
+#define CONTRAST 1.0          // below 1 = flatter, above 1 = punchier (0.2..2.5)
+#define BRIGHTNESS 1.0        // overall brightness (0.2..3)
+#define TINT_R 1.0            // colour multiplied over the picture, white = unchanged: red
+#define TINT_G 1.0            // colour multiplied over the picture, white = unchanged: green
+#define TINT_B 1.0            // colour multiplied over the picture, white = unchanged: blue
+#define VIGNETTE 0.0          // extra darkening towards the corners (0..1.5)
+#define TEXT_VEIL 0.4         // darkening behind terminal text so it stays readable (0..1)
+#define TEXT_SHADOW 1.0       // strength of the drop shadow under terminal text (0..1)
+
+// ---- finishing helpers (identical in every wallpaper of this collection) ----
+// Where a screen position looks in the original picture: rotation, kaleidoscope, zoom and shift.
+// Only the generated picture goes through this, never the terminal text.
+float2 finishView(float2 p)
+{
+    float ang = ROTATION * 0.017453293 + SPIN * TIME * 0.104719755;
+    float viewCos = cos(ang), viewSin = sin(ang);
+    p = float2(viewCos * p.x - viewSin * p.y, viewSin * p.x + viewCos * p.y);
+    if (MIRROR > 0)
+    {
+        float seg = 3.141592654 / max(float(MIRROR_SEGMENTS), 1.0);
+        float a = atan2(p.x, p.y + 1e-7);
+        a = abs(a - 2.0 * seg * floor(a / (2.0 * seg) + 0.5));
+        p = length(p) * float2(sin(a), cos(a));
+    }
+    return p / max(ZOOM, 0.01) - float2(OFFSET_X, OFFSET_Y);
+}
+
+// Hue, saturation, contrast, brightness, tint and vignette of the finished picture (uv = 0..1 across the screen).
+float3 finishGrade(float3 col, float2 uv)
+{
+    float turn = (HUE_SHIFT + HUE_CYCLE * TIME / 60.0) * 6.2831853;
+    float hueCos = cos(turn), hueSin = sin(turn);
+    float3 axis = float3(0.57735027, 0.57735027, 0.57735027);
+    col = col * hueCos + cross(axis, col) * hueSin + axis * dot(axis, col) * (1.0 - hueCos);
+    float grey = dot(col, float3(0.299, 0.587, 0.114));
+    col = col * SATURATION + grey * (1.0 - SATURATION);
+    col = col * CONTRAST + 0.5 * (1.0 - CONTRAST);
+    col *= BRIGHTNESS * float3(TINT_R, TINT_G, TINT_B);
+    float2 corner = uv - 0.5;
+    col *= saturate(1.0 - dot(corner, corner) * VIGNETTE * 2.0);
+    return col;
+}
+
+float ditherHash12(float2 p)
+{
+    float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+// --------------------
+
+
+// --------------------
+// GLSL => HLSL adapters
+#define vec2  float2
+#define vec3  float3
+#define vec4  float4
+#define mat2  float2x2
+#define mat3  float3x3
+#define fract frac
+#define mix   lerp
+
+float mod(float x, float y) {
+  return x - y * floor(x/y);
+}
+
+vec2 mod(vec2 x, vec2 y) {
+  return x - y * floor(x/y);
+}
+
+static const vec2 unit2 = vec2(1.0, 1.0);
+static const vec3 unit3 = vec3(1.0, 1.0, 1.0);
+// --------------------
+
+#define PI          3.141592654
+#define TAU         (2.0*PI)
+#define ROT(a)      mat2(cos(a), sin(a), -sin(a), cos(a))
+
+#define PERIOD      SCENE_LENGTH
+
+// License: WTFPL, author: sam hocevar, found: https://stackoverflow.com/a/17897228/418488
+static const vec4 hsv2rgb_K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+vec3 hsv2rgb(vec3 c) {
+  vec3 p = abs(fract(c.xxx + hsv2rgb_K.xyz) * 6.0 - hsv2rgb_K.www);
+  return c.z * mix(hsv2rgb_K.xxx, clamp(p - hsv2rgb_K.xxx, 0.0, 1.0), c.y);
+}
+// License: WTFPL, author: sam hocevar, found: https://stackoverflow.com/a/17897228/418488
+//  Macro version of above to enable compile-time constants
+#define HSV2RGB(c)  (c.z * mix(hsv2rgb_K.xxx, clamp(abs(fract(c.xxx + hsv2rgb_K.xyz) * 6.0 - hsv2rgb_K.www) - hsv2rgb_K.xxx, 0.0, 1.0), c.y))
+
+// License: MIT, author: Inigo Quilez, found: https://iquilezles.org/articles/intersectors
+float rayTorus(vec3 ro, vec3 rd, vec2 tor) {
+  float po = 1.0;
+
+  float Ra2 = tor.x*tor.x;
+  float ra2 = tor.y*tor.y;
+
+  float m = dot(ro,ro);
+  float n = dot(ro,rd);
+
+  // bounding sphere
+  {
+    float h = n*n - m + (tor.x+tor.y)*(tor.x+tor.y);
+    if(h<0.0) return -1.0;
+    //float t = -n-sqrt(h); // could use this to compute intersections from ro+t*rd
+  }
+
+  // find quartic equation
+  float k = (m - ra2 - Ra2)/2.0;
+  float k3 = n;
+  float k2 = n*n + Ra2*rd.z*rd.z + k;
+  float k1 = k*n + Ra2*ro.z*rd.z;
+  float k0 = k*k + Ra2*ro.z*ro.z - Ra2*ra2;
+
+  #ifndef TORUS_REDUCE_PRECISION
+  // prevent |c1| from being too close to zero
+  if(abs(k3*(k3*k3 - k2) + k1) < 0.01)
+  {
+    po = -1.0;
+    float tmp=k1; k1=k3; k3=tmp;
+    k0 = 1.0/k0;
+    k1 = k1*k0;
+    k2 = k2*k0;
+    k3 = k3*k0;
+  }
+  #endif
+
+  float c2 = 2.0*k2 - 3.0*k3*k3;
+  float c1 = k3*(k3*k3 - k2) + k1;
+  float c0 = k3*(k3*(-3.0*k3*k3 + 4.0*k2) - 8.0*k1) + 4.0*k0;
+
+
+  c2 /= 3.0;
+  c1 *= 2.0;
+  c0 /= 3.0;
+
+  float Q = c2*c2 + c0;
+  float R = 3.0*c0*c2 - c2*c2*c2 - c1*c1;
+
+  float h = R*R - Q*Q*Q;
+  float z = 0.0;
+  if(h < 0.0) {
+    // 4 intersections
+    float sQ = sqrt(Q);
+    z = 2.0*sQ*cos(acos(R/(sQ*Q)) / 3.0);
+  } else {
+    // 2 intersections
+    float sQ = pow(sqrt(h) + abs(R), 1.0/3.0);
+    z = sign(R)*abs(sQ + Q/sQ);
+  }
+  z = c2 - z;
+
+  float d1 = z   - 3.0*c2;
+  float d2 = z*z - 3.0*c0;
+  if(abs(d1) < 1.0e-4) {
+    if(d2 < 0.0) return -1.0;
+    d2 = sqrt(d2);
+  } else {
+    if(d1 < 0.0) return -1.0;
+    d1 = sqrt(d1/2.0);
+    d2 = c1/d1;
+  }
+
+  //----------------------------------
+
+  float result = 1e20;
+
+  h = d1*d1 - z + d2;
+  if(h > 0.0) {
+    h = sqrt(h);
+    float t1 = -d1 - h - k3; t1 = (po<0.0)?2.0/t1:t1;
+    float t2 = -d1 + h - k3; t2 = (po<0.0)?2.0/t2:t2;
+    if(t1 > 0.0) result=t1;
+    if(t2 > 0.0) result=min(result,t2);
+  }
+
+  h = d1*d1 - z - d2;
+  if(h > 0.0) {
+    h = sqrt(h);
+    float t1 = d1 - h - k3;  t1 = (po<0.0)?2.0/t1:t1;
+    float t2 = d1 + h - k3;  t2 = (po<0.0)?2.0/t2:t2;
+    if(t1 > 0.0) result=min(result,t1);
+    if(t2 > 0.0) result=min(result,t2);
+  }
+
+  return result;
+}
+
+// License: MIT, author: Inigo Quilez, found: https://iquilezles.org/articles/intersectors
+vec3 torusNormal(vec3 pos, vec2 tor) {
+  return normalize(pos*(dot(pos,pos)- tor.y*tor.y - tor.x*tor.x*vec3(1.0,1.0,-1.0)));
+}
+
+// License: Unknown, author: Unknown, found: don't remember
+float tanh_approx(float x) {
+  //  Found this somewhere on the interwebs
+  //  return tanh(x);
+  float x2 = x*x;
+  return clamp(x*(27.0 + x2)/(27.0+9.0*x2), -1.0, 1.0);
+}
+
+// License: MIT OR CC-BY-NC-4.0, author: mercury, found: https://mercury.sexy/hg_sdf/
+float mod1(inout float p, float size) {
+  float halfsize = size*0.5;
+  float c = floor((p + halfsize)/size);
+  p = mod(p + halfsize, size) - halfsize;
+  return c;
+}
+
+// License: Unknown, author: Unknown, found: don't remember
+float hash(float co) {
+  return fract(sin(co*12.9898) * 13758.5453);
+}
+
+vec3 effect(vec2 p, float ntime, float ptime) {
+  float h0 = hash(ntime + 1.5);
+  float rn = mod(ntime, 3.0);
+  if (CAMERA_VIEW < 4) rn = float(CAMERA_VIEW-1);
+  const float rdd = 2.0;
+  const vec3 ro0 = vec3(0.0, 0.75, -0.2);
+  const vec3 ro1 = vec3(0.0, 0.75, 0.2);
+  const vec3 ro2 = vec3(0.0, 0.5, -0.38);
+  vec3 ro  = ro0;
+  if (rn == 1.0) {
+    ro = ro1;
+  } else if (rn == 2.0) {
+    ro = ro2;
+  }
+
+  const vec3 la  = vec3(0.0, 0.0, 0.2);
+  const vec3 up  = normalize(vec3(0.3, 0.0, 1.0));
+  vec3 lp1 = ro;
+  const mat2 rotxy = ROT(0.85);
+  const mat2 rotxz = ROT(-0.5);
+  lp1.xy = mul(rotxy, lp1.xy);
+  lp1.xz = mul(rotxz, lp1.xz);
+
+  vec3 ww = normalize(la - ro);
+  vec3 uu = normalize(cross(up, ww));
+  vec3 vv = (cross(ww,uu));
+  vec3 rd = normalize(p.x*uu + p.y*vv + rdd*ww);
+
+  const vec2 tor = 0.55*vec2(1.0, TUBE_THICKNESS);
+  float td    = rayTorus(ro, rd, tor);
+  vec3  tpos  = ro + rd*td;
+  vec3  tnor  = -torusNormal(tpos, tor);
+  vec3  tref  = reflect(rd, tnor);
+
+  vec3  ldif1 = lp1 - tpos;
+  float ldd1  = dot(ldif1, ldif1);
+  float ldl1  = sqrt(ldd1);
+  vec3  ld1   = normalize(ldif1);
+  vec3  sro   = tpos+0.05*tnor;
+  float sd    = rayTorus(sro, ld1, tor);
+  vec3  spos  = sro+ld1*sd;
+  vec3  snor  = -torusNormal(spos, tor);
+
+  float dif1  = max(dot(tnor, ld1), 0.0);
+  float spe1  = pow(max(dot(tref, ld1), 0.0), GLOSS);
+  float r     = length(tpos.xy);
+
+  float a     = atan2(tpos.y, tpos.x);
+  float tw    = TWIST*PI*tpos.z/(r+0.5*abs(tpos.z));
+  float aa    = ptime*TAU*STRIPE_SPEED/45.0;
+  a -= tw+aa;
+
+  float n = floor(mix(1.0, float(STRIPES_MAX)+1.0, h0));
+  float pg = a;
+  float ng = mod1(pg, TAU/n);
+  float dg = max(abs(pg)-STRIPE_WIDTH, 0.001);
+
+  vec3 gcol = hsv2rgb(vec3(fract(COLOUR_SPEED*ptime+HUE_SPREAD*ng*tpos.y), 0.75, 1.0-0.5));
+  const vec3 lcol = 0.75*vec3(METAL_R, METAL_G, METAL_B);
+
+  float fre = 1.0+dot(rd, tnor);
+  fre *= fre;
+
+  vec3 col = 0.0*unit3;
+
+  vec3 mat = DIFFUSE*lcol*dif1+SHINE*sqrt(lcol)*spe1*fre;
+  if (td > -1.0) {
+    col += mat;
+  }
+
+  float shade = mix(1.0, SHADOW_DEPTH, pow(abs(dot(ld1, snor)), 3.0*tanh_approx(sd)));
+  if (sd < ldl1) {
+    col *= shade;
+  }
+
+  vec3 glow = STRIPE_GLOW*gcol/(dg)*smoothstep(1.0, 0.8, fre);
+  if (td > -1.0) {
+    col += glow;
+  }
+
+  return col;
+}
+
+// License: Unknown, author: nmz (twitter: @stormoid), found: https://www.shadertoy.com/view/NdfyRM
+vec3 sRGB(vec3 t) {
+  return mix(1.055*pow(t, unit3*(1./2.4)) - 0.055, 12.92*t, step(t, unit3*(0.0031308)));
+}
+
+// License: Unknown, author: Matt Taylor (https://github.com/64), found: https://64.github.io/tonemapping/
+vec3 aces_approx(vec3 v) {
+  v = max(v, 0.0);
+  v *= 0.6f;
+  float a = 2.51f;
+  float b = 0.03f;
+  float c = 2.43f;
+  float d = 0.59f;
+  float e = 0.14f;
+  return clamp((v*(a*v+b))/(v*(c*v+d)+e), 0.0f, 1.0f);
+}
+
+//
+// PS_OUTPUT ps_main(in PS_INPUT In)
+#if defined(WINDOWS_TERMINAL)
+float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+#else
+float4 ps_main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+#endif
+{
+  vec2 q = tex;
+  vec2 p = -1.0 + 2.0*q;
+#if defined(WINDOWS_TERMINAL)
+  p.y = -p.y;
+#endif
+  p.x *= RESOLUTION.x/RESOLUTION.y;
+  p = finishView(p);
+
+  float ptime = mod(TIME, PERIOD);
+  float ntime = floor(TIME/PERIOD);
+  vec3 col = effect(p, ntime, ptime);
+  col = aces_approx(col);
+  col *= smoothstep(0.0, max(SCENE_FADE*SPEED, 0.0001), ptime);   // the fade lasts SCENE_FADE real seconds at any SPEED
+  col *= smoothstep(PERIOD, PERIOD-max(SCENE_FADE*SPEED, 0.0001), ptime);
+  col = sRGB(col);
+
+  col = finishGrade(col, q);
+
+  vec4 fg = shaderTexture.Sample(samplerState, q);
+  vec4 sh = shaderTexture.Sample(samplerState, q-2.0*unit2/RESOLUTION.xy);
+  float2 veilStep = 2.0 * Scale / Resolution;
+  float cover = max(fg.w, max(shaderTexture.Sample(samplerState, q + veilStep).w, shaderTexture.Sample(samplerState, q - veilStep).w));
+  col *= 1.0 - TEXT_VEIL * cover;                       // darken behind text so it stays readable
+  col = mix(col, 0.0*unit3, sh.w*TEXT_SHADOW);
+  col = mix(col, fg.xyz, fg.w);
+
+  col += (ditherHash12(q * Resolution) - 0.5) / 255.0;    // dither: hides banding in dark gradients
+  return vec4(col, 1.0);
+}

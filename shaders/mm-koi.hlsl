@@ -1,0 +1,154 @@
+// @name: Koi Pond
+// @tags: multimonitor, nature, water, calming
+// Koi swim through a dark pond with sunlight caustics and slow ripples. In Span mode the fish swim from one
+// monitor to the next across the whole desktop.
+
+Texture2D shaderTexture;
+SamplerState samplerState;
+cbuffer PixelShaderSettings {
+    float  Time;
+    float  Scale;
+    float2 Resolution;
+    float4 Background;
+};
+
+#define FISH_COUNT 7          // number of koi (1..12)
+#define FISH_SIZE 1.0         // size of the fish
+#define SWIM_SPEED 1.0        // swimming speed
+#define WIGGLE 1.0            // tail movement
+#define PATH_CURVE 1.0        // how much the paths meander
+#define FISH_R 1.00           // koi colour: red
+#define FISH_G 0.42           // koi colour: green
+#define FISH_B 0.10           // koi colour: blue
+#define WHITE_PATCHES 0.55    // amount of white markings (0..1)
+#define WATER_R 0.02          // water colour: red
+#define WATER_G 0.14          // water colour: green
+#define WATER_B 0.16          // water colour: blue
+#define CAUSTICS 0.8          // sunlight pattern on the pond floor
+#define RIPPLES 1.0           // surface ripple rings
+#define DEPTH_SHADOW 0.6      // shadows under the fish
+#define LILY_PADS 1.0         // lily pads (0 = none)
+#define BRIGHTNESS 1.0        // overall brightness
+#define TEXT_VEIL 0.5         // darkening behind terminal text
+
+float hash11(float p) { p = frac(p * 0.1031); p *= p + 33.33; p *= p + p; return frac(p); }
+
+float hash12(float2 p)
+{
+    float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+
+float vnoise(float2 p)
+{
+    float2 i = floor(p), f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(hash12(i), hash12(i + float2(1, 0)), f.x), lerp(hash12(i + float2(0, 1)), hash12(i + float2(1, 1)), f.x), f.y);
+}
+
+float2 fishCentre(float s, float fi, float aspect, float dirSign)
+{
+    float x = (dirSign > 0.0 ? s : 1.0 - s) * (aspect + 0.5) - 0.25;
+    float y = 0.12 + 0.76 * hash11(fi * 4.1 + 2.0) + PATH_CURVE * 0.06 * sin(x * (2.0 + hash11(fi * 1.3) * 2.0) + fi * 3.0);
+    return float2(x, y);
+}
+
+// returns fish coverage (x) and colour mix towards white (y) at local coords (along: head +, tail -)
+float2 fishShape(float along, float perp, float len, float t, float fi)
+{
+    float u = along / len;                                             // -1 tail tip .. +1 nose
+    if (u < -1.25 || u > 1.05) return float2(0.0, 0.0);
+    float tailness = saturate(0.4 - u);                                // wiggle grows towards the tail
+    perp += sin(u * 4.0 - t * 6.0 * SWIM_SPEED + fi * 2.0) * 0.045 * len * WIGGLE * tailness * 2.0;
+    float bodyW = len * 0.22 * sqrt(saturate(1.0 - u * u)) * (0.55 + 0.45 * saturate(u + 1.0));
+    float body = 1.0 - smoothstep(bodyW * 0.8, bodyW, abs(perp));
+    body *= step(-1.0, u);
+    float tu = saturate((-u - 0.8) / 0.45);                            // tail fin: fans out behind the body
+    float fin = (1.0 - smoothstep(len * 0.22 * tu * 0.9, len * 0.24 * tu, abs(perp))) * step(-1.25, u) * step(u, -0.8) * 0.8;
+    float su = (u - 0.25) / 0.2;                                       // pectoral fins
+    float side = (1.0 - smoothstep(0.3, 1.0, abs(su))) * (1.0 - smoothstep(len * 0.26, len * 0.33, abs(perp))) * step(bodyW * 0.7, abs(perp)) * 0.45;
+    float cover = saturate(max(body, max(fin, side)));
+    float white = step(1.0 - WHITE_PATCHES, vnoise(float2(u * 3.0 + fi * 7.0, perp / len * 6.0 + fi * 3.0)));
+    return float2(cover, white * body + (fin + side) * 0.7);
+}
+
+float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+{
+    float aspect = Resolution.x / Resolution.y;
+    float2 p = float2(tex.x * aspect, tex.y);
+    float t = Time;
+
+    // surface ripples distort everything below
+    float2 rp = p * 3.0;
+    float2 rid = floor(rp);
+    float2 warp = float2(0.0, 0.0);
+    float ringLight = 0.0;
+    for (int ry = -1; ry <= 1; ry++)
+    for (int rx = -1; rx <= 1; rx++)
+    {
+        float2 cell = rid + float2(rx, ry);
+        float h = hash12(cell);
+        float age = frac(t * 0.12 + h);                                // each cell drops a ring now and then
+        float2 c = cell + 0.2 + 0.6 * float2(hash12(cell + 3.0), hash12(cell + 7.0));
+        float2 d = rp - c;
+        float r = length(d);
+        float wave = sin((r - age * 1.4) * 30.0) * exp(-abs(r - age * 1.4) * 9.0) * (1.0 - age) * step(0.5, h);
+        warp += d / max(r, 1e-3) * wave;
+        ringLight += wave;
+    }
+    float2 q = p + warp * 0.006 * RIPPLES;
+
+    // pond floor: water colour + caustics
+    float3 water = float3(WATER_R, WATER_G, WATER_B);
+    float2 cq = q * 5.0 + float2(vnoise(q * 2.0 + t * 0.1), vnoise(q * 2.0 - t * 0.12 + 5.0)) * 1.4;
+    float ca = sin(cq.x + sin(cq.y * 1.3 + t * 0.5)) * sin(cq.y * 1.1 - sin(cq.x * 0.9 - t * 0.4));
+    float3 col = water * (0.7 + 0.5 * vnoise(q * 1.5)) + water * pow(saturate(1.0 - abs(ca)), 3.0) * 0.9 * CAUSTICS;
+
+    // koi
+    for (int i = 0; i < FISH_COUNT; i++)
+    {
+        float fi = float(i);
+        float dirSign = hash11(fi * 2.7 + 0.3) < 0.4 ? -1.0 : 1.0;
+        float speed = (0.018 + 0.016 * hash11(fi * 6.1)) * SWIM_SPEED;
+        float s = frac(t * speed + hash11(fi * 3.3));
+        float2 c = fishCentre(s, fi, aspect, dirSign);
+        float2 dir = normalize(c - fishCentre(s - 0.01, fi, aspect, dirSign));
+        float len = 0.115 * FISH_SIZE * (0.7 + 0.6 * hash11(fi * 8.9));
+        float2 rel = q - c;
+        float2 srel = rel - float2(0.012, 0.016);                      // shadow offset
+        float2 sh = fishShape(dot(srel, dir), dot(srel, float2(-dir.y, dir.x)), len, t, fi);
+        col *= 1.0 - sh.x * 0.5 * DEPTH_SHADOW;
+        float2 fs = fishShape(dot(rel, dir), dot(rel, float2(-dir.y, dir.x)), len, t, fi);
+        float3 base = float3(FISH_R, FISH_G, FISH_B) * (0.8 + 0.4 * hash11(fi * 5.5));
+        float3 fishCol = lerp(base, float3(0.95, 0.93, 0.88), saturate(fs.y));
+        col = lerp(col, fishCol * (0.75 + 0.25 * water.g * 4.0), fs.x * 0.92);
+    }
+
+    // lily pads floating on top
+    if (LILY_PADS > 0.0)
+    {
+        float2 lp = p * 1.6 + float2(sin(t * 0.03) * 0.1, 0.0);
+        float2 lid = floor(lp);
+        float2 lc = lid + 0.3 + 0.4 * float2(hash12(lid + 11.0), hash12(lid + 17.0));
+        float2 ld = lp - lc;
+        float lr = 0.10 + 0.10 * hash12(lid + 23.0);
+        float la = atan2(ld.y, ld.x) + hash12(lid) * 6.28;
+        float pad = (1.0 - smoothstep(lr - 0.01, lr, length(ld))) * step(0.12, abs(frac(la / 6.2831853) - 0.5) * 2.0) * step(1.0 - 0.45 * LILY_PADS, hash12(lid + 31.0));
+        float3 padCol = float3(0.10, 0.32, 0.12) * (0.8 + 0.4 * cos(la * 9.0) * 0.3 + 0.3 * (1.0 - length(ld) / lr));
+        col = lerp(col, padCol, pad);
+    }
+
+    col += float3(0.5, 0.7, 0.7) * max(ringLight, 0.0) * 0.06 * RIPPLES;      // glints on the ripple crests
+    col = 1.0 - exp(-col * 1.5 * BRIGHTNESS);
+    float2 vc = tex - 0.5;
+    col *= 1.0 - dot(vc, vc) * 0.6;
+
+    float4 fg = shaderTexture.Sample(samplerState, tex);
+    float2 o = 2.0 * Scale / Resolution;
+    float cover = max(fg.a, max(shaderTexture.Sample(samplerState, tex + o).a, shaderTexture.Sample(samplerState, tex - o).a));
+    col *= 1.0 - TEXT_VEIL * cover;
+    col = col * (1.0 - fg.a) + fg.rgb;
+    col += (hash12(tex * Resolution) - 0.5) / 255.0;
+    return float4(saturate(col), 1.0);
+}

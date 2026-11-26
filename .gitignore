@@ -1,0 +1,18 @@
+# build output
+bin/
+obj/
+dist/
+build/
+*.log
+/windows/shader-check.txt
+/windows/selftest.txt
+/windows/test.log
+bench-*.json
+
+# editors / OS
+.vs/
+.vscode/
+*.user
+Thumbs.db
+.DS_Store
+__pycache__/

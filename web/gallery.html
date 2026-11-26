@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:">
+<meta name="description" content="The shaders bundled with Wallpepper, running live in the browser.">
+<title>Wallpepper shader gallery</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230e1218'/%3E%3Crect x='2' y='2' width='5' height='5' fill='%23f0a843'/%3E%3Crect x='9' y='2' width='5' height='5' fill='%232b3444'/%3E%3Crect x='2' y='9' width='5' height='5' fill='%232b3444'/%3E%3Crect x='9' y='9' width='5' height='5' fill='%23f0a843'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Shader gallery</h1>
+    <p class="lede">The wallpapers bundled with Wallpepper, drawn live by your graphics card. Each one is a single
+      pixel shader; the Windows and Linux apps run the same files as desktop wallpaper.</p>
+  </header>
+
+  <figure class="scene">
+    <canvas id="scene" width="960" height="540" role="img" aria-label="The selected shader, animated"></canvas>
+  </figure>
+
+  <div class="picker">
+    <label>Shader <select id="shader" disabled></select></label>
+    <label>Detail <input id="scale" type="range" min="0.2" max="1" step="0.05" value="0.5"></label>
+    <button id="pause">Pause</button>
+    <span id="tags" class="hint"></span>
+  </div>
+  <p id="status" class="hint" role="status">Starting…</p>
+  <p class="hint">Some of these are heavy. If the picture stutters, lower the detail: the shader then draws
+    fewer pixels and the browser stretches them.</p>
+
+  <footer>
+    <a href="index.html">GPU benchmark</a>
+    <a href="https://github.com/DennisWalkewitz/Wallpepper/blob/main/docs/SHADER-GUIDE.md">Writing shaders</a>
+    <a href="https://github.com/DennisWalkewitz/Wallpepper">Wallpepper on GitHub</a>
+  </footer>
+</main>
+<script src="wallpepper.js"></script>
+<script src="gallery.js"></script>
+</body>
+</html>

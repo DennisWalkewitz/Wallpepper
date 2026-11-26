@@ -1,0 +1,10 @@
+bin/
+obj/
+dist/
+*.log
+shader-check.txt
+shader-check.txt.partial
+bench-result.json
+selftest.txt
+selftest.txt.partial
+test.log

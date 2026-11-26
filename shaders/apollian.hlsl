@@ -1,0 +1,496 @@
+// @name: Apollonian Flight
+// @tags: abstract
+// A slow flight through an endless row of glowing fractal windows: each layer is an Apollonian
+// gasket folded into a kaleidoscope, with a hexagonal hole to fly through and a soft light at the far end.
+#define WINDOWS_TERMINAL
+
+Texture2D shaderTexture;
+SamplerState samplerState;
+
+// --------------------
+#if defined(WINDOWS_TERMINAL)
+cbuffer PixelShaderSettings {
+  float  Time;
+  float  Scale;
+  float2 Resolution;
+  float4 Background;
+};
+
+#define TIME        (Time*SPEED)
+#define RESOLUTION  Resolution
+#else
+float time;
+float2 resolution;
+
+#define TIME        time
+#define RESOLUTION  resolution
+#endif
+// --------------------
+
+// ---- Wallpepper settings: every number below is a control in the app ----
+#define FLY_SPEED 1.0         // how fast the camera flies through the layers (0..6)
+#define MORPH_SPEED 1.0       // how fast the fractal pattern changes shape (0..6)
+#define COLOUR_SPEED 1.0      // how fast the colour rings travel outwards, negative = inwards (-6..6)
+#define PATH_SWAY 0.10        // how much the flight path winds from side to side (0..0.3)
+#define PLANES 8              // number of fractal layers visible ahead (3..10)
+#define PLANE_DISTANCE 0.25   // distance between two layers (0.1..1)
+#define SYMMETRY 10           // kaleidoscope arms of each pattern (2..24)
+#define FRACTAL_DETAIL 7      // fractal iterations: more = finer filigree (2..10)
+#define FRACTAL_SHAPE 0.8     // shape of the fractal: lower = sparse arcs, higher = dense lace (0.5..1.3)
+#define HOLE_SIZE 0.25        // size of the hexagonal hole in each layer (0.05..0.6)
+#define LINE_WIDTH 0.0125     // thickness of the hexagon and ring outlines (0.002..0.05)
+#define RINGS 1               // 1 = concentric ring lines on every layer, 0 = none
+#define RING_DENSITY 0.75     // how many colour rings cross each layer (0..3)
+#define COLOUR_STRENGTH 0.75  // how colourful the layers are, 0 = white (0..1)
+#define GLOW 0.5              // glow around the lines (0..2)
+#define HIGHLIGHTS 0.125      // strength of the two coloured lamps reflecting on the layers (0..1)
+#define LIGHT_1_R 0.75        // first lamp colour: red
+#define LIGHT_1_G 0.5         // first lamp colour: green
+#define LIGHT_1_B 1.0         // first lamp colour: blue
+#define LIGHT_2_R 1.0         // second lamp colour: red
+#define LIGHT_2_G 0.5         // second lamp colour: green
+#define LIGHT_2_B 0.75        // second lamp colour: blue
+#define SKY_R 1.0             // light at the far end of the flight: red
+#define SKY_G 0.75            // light at the far end of the flight: green
+#define SKY_B 0.85            // light at the far end of the flight: blue
+#define CORNER_SHADE 0.5      // the shader's own darkening of the screen edges (0..1)
+// ---- picture, colour and text: these work the same in every wallpaper of the Hammster / mrange collection ----
+#define SPEED 1.0             // time scale of everything: 0 = frozen, 2 = twice as fast (0..4)
+#define ZOOM 1.0              // magnify the picture: below 1 = wider view, above 1 = closer (0.25..4)
+#define OFFSET_X 0.0          // shift the picture sideways (-1..1)
+#define OFFSET_Y 0.0          // shift the picture up or down (-1..1)
+#define ROTATION 0.0          // turn the whole picture clockwise, in degrees (-180..180)
+#define SPIN 0.0              // keep turning the whole picture: clockwise turns per minute, negative = anticlockwise (-6..6)
+#define MIRROR 0              // 1 = kaleidoscope: the picture is mirrored into equal slices around the centre
+#define MIRROR_SEGMENTS 6     // number of kaleidoscope slices when MIRROR is on; 1 = plain left-right mirror (1..16)
+#define HUE_SHIFT 0.0         // rotate all colours around the colour wheel (0..1)
+#define HUE_CYCLE 0.0         // keep rotating the colours: full turns per minute (-6..6)
+#define SATURATION 1.0        // 0 = grey, 1 = original, 2 = vivid (0..2)
+#define CONTRAST 1.0          // below 1 = flatter, above 1 = punchier (0.2..2.5)
+#define BRIGHTNESS 1.0        // overall brightness (0.2..3)
+#define TINT_R 1.0            // colour multiplied over the picture, white = unchanged: red
+#define TINT_G 1.0            // colour multiplied over the picture, white = unchanged: green
+#define TINT_B 1.0            // colour multiplied over the picture, white = unchanged: blue
+#define VIGNETTE 0.0          // extra darkening towards the corners (0..1.5)
+#define TEXT_VEIL 0.4         // darkening behind terminal text so it stays readable (0..1)
+#define TEXT_SHADOW 1.0       // strength of the drop shadow under terminal text (0..1)
+
+// ---- finishing helpers (identical in every wallpaper of this collection) ----
+// Where a screen position looks in the original picture: rotation, kaleidoscope, zoom and shift.
+// Only the generated picture goes through this, never the terminal text.
+float2 finishView(float2 p)
+{
+    float ang = ROTATION * 0.017453293 + SPIN * TIME * 0.104719755;
+    float viewCos = cos(ang), viewSin = sin(ang);
+    p = float2(viewCos * p.x - viewSin * p.y, viewSin * p.x + viewCos * p.y);
+    if (MIRROR > 0)
+    {
+        float seg = 3.141592654 / max(float(MIRROR_SEGMENTS), 1.0);
+        float a = atan2(p.x, p.y + 1e-7);
+        a = abs(a - 2.0 * seg * floor(a / (2.0 * seg) + 0.5));
+        p = length(p) * float2(sin(a), cos(a));
+    }
+    return p / max(ZOOM, 0.01) - float2(OFFSET_X, OFFSET_Y);
+}
+
+// Hue, saturation, contrast, brightness, tint and vignette of the finished picture (uv = 0..1 across the screen).
+float3 finishGrade(float3 col, float2 uv)
+{
+    float turn = (HUE_SHIFT + HUE_CYCLE * TIME / 60.0) * 6.2831853;
+    float hueCos = cos(turn), hueSin = sin(turn);
+    float3 axis = float3(0.57735027, 0.57735027, 0.57735027);
+    col = col * hueCos + cross(axis, col) * hueSin + axis * dot(axis, col) * (1.0 - hueCos);
+    float grey = dot(col, float3(0.299, 0.587, 0.114));
+    col = col * SATURATION + grey * (1.0 - SATURATION);
+    col = col * CONTRAST + 0.5 * (1.0 - CONTRAST);
+    col *= BRIGHTNESS * float3(TINT_R, TINT_G, TINT_B);
+    float2 corner = uv - 0.5;
+    col *= saturate(1.0 - dot(corner, corner) * VIGNETTE * 2.0);
+    return col;
+}
+
+float ditherHash12(float2 p)
+{
+    float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+// --------------------
+
+
+// --------------------
+// GLSL => HLSL adapters
+#define vec2  float2
+#define vec3  float3
+#define vec4  float4
+#define mat2  float2x2
+#define mat3  float3x3
+#define fract frac
+#define mix   lerp
+
+float mod(float x, float y) {
+  return x - y * floor(x/y);
+}
+
+vec2 mod(vec2 x, vec2 y) {
+  return x - y * floor(x/y);
+}
+
+static const vec2 unit2 = vec2(1.0, 1.0);
+static const vec3 unit3 = vec3(1.0, 1.0, 1.0);
+static const vec4 unit4 = vec4(1.0, 1.0, 1.0, 1.0);
+
+// --------------------
+
+#define PI              3.141592654
+#define TAU             (2.0*PI)
+#define PI_2            (0.5*PI)
+#define ROT(a)          mat2(cos(a), sin(a), -sin(a), cos(a))
+#define PSIN(x)         (0.5+0.5*sin(x))
+#define LESS(a,b,c)     mix(a,b,step(0.,c))
+#define SABS(x,k)       LESS((.5/(k))*(x)*(x)+(k)*.5,abs(x),abs(x)-(k))
+#define L2(x)           dot(x, x)
+
+float hash(float co) {
+  return fract(sin(co*12.9898) * 13758.5453);
+}
+
+// License: MIT, author: Pascal Gilcher, found: https://www.shadertoy.com/view/flSXRV
+float atan_approx(float y, float x) {
+  float cosatan2 = x / (abs(x) + abs(y));
+  float t = PI_2 - cosatan2 * PI_2;
+  return y < 0.0 ? -t : t;
+}
+
+vec2 toPolar(vec2 p) {
+  return vec2(length(p), atan_approx(p.y, p.x));
+}
+
+vec2 toRect(vec2 p) {
+  return vec2(p.x*cos(p.y), p.x*sin(p.y));
+}
+
+float modMirror1(inout float p, float size) {
+  float halfsize = size*0.5;
+  float c = floor((p + halfsize)/size);
+  p = mod(p + halfsize,size) - halfsize;
+  p *= mod(c, 2.0)*2.0 - 1.0;
+  return c;
+}
+
+float smoothKaleidoscope(inout vec2 p, float sm, float rep) {
+  vec2 hp = p;
+
+  vec2 hpp = toPolar(hp);
+  float rn = modMirror1(hpp.y, TAU/rep);
+
+  float sa = PI/rep - SABS(PI/rep - abs(hpp.y), sm);
+  hpp.y = sign(hpp.y)*(sa);
+
+  hp = toRect(hpp);
+
+  p = hp;
+
+  return rn;
+}
+
+vec4 alphaBlend(vec4 back, vec4 front) {
+  float w = front.w + back.w*(1.0-front.w);
+  vec3 xyz = (front.xyz*front.w + back.xyz*back.w*(1.0-front.w))/w;
+  return w > 0.0 ? vec4(xyz, w) : unit4*(0.0);
+}
+
+vec3 alphaBlend(vec3 back, vec4 front) {
+  return mix(back, front.xyz, front.w);
+}
+
+float tanh_approx(float x) {
+//  return tanh(x);
+  float x2 = x*x;
+  return clamp(x*(27.0 + x2)/(27.0+9.0*x2), -1.0, 1.0);
+}
+
+float pmin(float a, float b, float k) {
+  float h = clamp( 0.5+0.5*(b-a)/k, 0.0, 1.0);
+
+  return mix(b, a, h) - k*h*(1.0-h);
+}
+
+vec3 hsv2rgb(vec3 c) {
+  const vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+float apollian(vec4 p, float s) {
+  float scale = 1.0;
+
+  for(int i=0; i<FRACTAL_DETAIL; ++i) {
+    p = -1.0 + 2.0*fract(0.5*p+0.5);
+
+    float r2 = dot(p,p);
+
+    float k  = s/r2;
+    p       *= k;
+    scale   *= k;
+  }
+
+  return abs(p.y)/scale;
+}
+
+vec2 mod2_1(inout vec2 p) {
+  vec2 c = floor(p + 0.5);
+  p = fract(p + 0.5) - 0.5;
+  return c;
+}
+
+float hex(vec2 p, float r) {
+  const vec3 k = vec3(-sqrt(3.0)/2.0,1.0/2.0,sqrt(3.0)/3.0);
+  p = p.yx;
+  p = abs(p);
+  p -= 2.0*min(dot(k.xy,p),0.0)*k.xy;
+  p -= vec2(clamp(p.x, -k.z*r, k.z*r), r);
+  return length(p)*sign(p.y);
+}
+
+float circle(vec2 p, float r) {
+  return length(p) - r;
+}
+
+// -----------------------------------------------------------------------------
+// PATH
+// -----------------------------------------------------------------------------
+
+// The path function
+vec3 offset(float z) {
+  float a = z;
+  vec2 p = -(PATH_SWAY)*(vec2(cos(a), sin(a*sqrt(2.0))) + vec2(cos(a*sqrt(0.75)), sin(a*sqrt(0.5))));
+  return vec3(p, z);
+}
+
+// The derivate of the path function
+//  Used to generate where we are looking
+vec3 doffset(float z) {
+  float eps = 0.1;
+  return 0.5*(offset(z + eps) - offset(z - eps))/eps;
+}
+
+// The second derivate of the path function
+//  Used to generate tilt
+vec3 ddoffset(float z) {
+  float eps = 0.1;
+  return 0.125*(doffset(z + eps) - doffset(z - eps))/eps;
+}
+
+// -----------------------------------------------------------------------------
+// PLANE MARCHER
+// -----------------------------------------------------------------------------
+
+float weird(vec2 p, float h) {
+  float z = 4.0;
+  float tm = 0.05*MORPH_SPEED*TIME+h*10.0;
+  mat2 a = ROT(tm*0.5);
+  mat2 b = mul(a, a);
+  mat2 c = ROT(tm*sqrt(0.5));
+  p = mul(a, p);
+  float r = 0.5;
+  vec4 off = vec4(r*PSIN(tm*sqrt(3.0)), r*PSIN(tm*sqrt(1.5)), r*PSIN(tm*sqrt(2.0)), 0.0);
+  vec4 pp = vec4(p.x, p.y, 0.0, 0.0)+off;
+  pp.w = 0.125*(1.0-tanh_approx(length(pp.xyz)));
+  pp.yz = mul(b, pp.yz);
+  pp.xz = mul(c, pp.xz);
+  pp /= z;
+  float d = apollian(pp, FRACTAL_SHAPE+h);
+  return d*z;
+}
+
+float circles(vec2 p) {
+  vec2 pp = toPolar(p);
+  const float ss = 0.25;
+  pp.x = fract(pp.x*ss)/ss;
+  p = toRect(pp);
+  float d = circle(p, 1.0);
+  return d;
+}
+
+vec2 df(vec2 p, float h) {
+  vec2 wp = p;
+  float rep = float(SYMMETRY);
+  float ss = 0.05*6.0/rep;
+  float n = smoothKaleidoscope(wp, ss, rep);
+
+  float d0 = weird(wp, h);
+  float d1 = hex(p, HOLE_SIZE)-0.1;
+  float d2 = circles(p);
+  const float lw = LINE_WIDTH;
+  d2 = abs(d2)-lw;
+  if (RINGS < 1) d2 = 1E6;
+  float d  = pmin(pmin(d0, d2, 0.1), abs(d1)-lw, 0.05);
+  return vec2(d, d1+lw);
+}
+
+vec4 plane(vec3 ro, vec3 rd, vec3 pp, vec3 off, float aa, float n) {
+  float h = hash(n);
+  float s = 0.25*mix(0.5, 0.25, h);
+  float dd= length(pp-ro);
+
+  const vec3 nor  = vec3(0.0, 0.0, 1.0);
+  const vec3 loff = vec3(0.25*0.5, 0.125*0.5, -0.125);
+  vec3 lp1  = ro + loff;
+  vec3 lp2  = ro + loff*vec3(-1.0, 1.0, 1.0);
+  vec3 ld1  = normalize(pp - lp1);
+  vec3 ld2  = normalize(pp - lp2);
+  float lpw1= 0.2/L2(pp - lp1);
+  float lpw2= 0.2/L2(pp - lp2);
+  vec3 ref  = reflect(rd, nor);
+  float ref1= pow(max(dot(nor, ld1), 0.0), 20.0);
+  float ref2= pow(max(dot(nor, ld2), 0.0), 20.0);
+  vec3  col1= vec3(LIGHT_1_R, LIGHT_1_G, LIGHT_1_B);
+  vec3  col2= vec3(LIGHT_2_R, LIGHT_2_G, LIGHT_2_B);
+
+  vec3 hn;
+  vec2 p = (pp-off*vec3(1.0, 1.0, 0.0)).xy;
+  p = mul(ROT(TAU*h), p);
+  vec2 d2 = df(p/s, h)*s;
+
+  float ha = smoothstep(-aa, aa, d2.y);
+  float d = d2.x;
+  vec4 col = unit4*(0.0);
+
+  float l   = length(10.0*p);
+  float ddf = 1.0/((1.0+2.0*dd));
+  float hue = fract(RING_DENSITY*l-0.05*COLOUR_SPEED*TIME)+0.3+0.15;
+  float sat = COLOUR_STRENGTH*tanh_approx(2.0*l)*ddf;
+  float vue = sqrt(ddf);
+  vec3 hsv  = vec3(hue, sat, vue);
+  vec3 bcol = hsv2rgb(hsv);
+  col.xyz   = mix(col.xyz, bcol, smoothstep(-aa, aa, -d));
+  float glow = (exp(-(10.0+100.0*tanh_approx(l))*10.0*max(d, 0.0)*ddf));
+  col.xyz   += GLOW*sqrt(bcol.zxy)*glow;
+  col.w     = ha*mix(0.75, 1.0, ha*glow);
+  col.xyz   += HIGHLIGHTS*col.w*(col1*ref1+col2*ref2);
+
+  return col;
+}
+
+vec3 skyColor(vec3 ro, vec3 rd) {
+  float ld = max(dot(rd, vec3(0.0, 0.0, 1.0)), 0.0);
+  return 1.25*vec3(SKY_R, SKY_G, SKY_B)*(tanh_approx(3.0*pow(ld, 100.0)));
+}
+
+vec3 color(vec3 ww, vec3 uu, vec3 vv, vec3 ro, vec2 p) {
+
+  float lp = length(p);
+  vec2 np = p + 1.0/RESOLUTION.xy;
+  const float rdd = tan(TAU/5.0);
+  vec3 rd = normalize(-p.x*uu + p.y*vv + rdd*ww);
+  vec3 nrd = normalize(-np.x*uu + np.y*vv + rdd*ww);
+
+  const float planeDist = PLANE_DISTANCE;
+  const int furthest = PLANES;
+  const int fadeFrom = max(furthest-3, 0);
+  const float fadeDist = planeDist*float(furthest - fadeFrom);
+  float nz = floor(ro.z / planeDist);
+
+  vec3 skyCol = skyColor(ro, rd);
+
+  // Steps from nearest to furthest plane and accumulates the color
+
+  vec4 acol = unit4*(0.0);
+  const float cutOff = 0.95;
+  bool cutOut = false;
+
+  for (int i = 1; i <= furthest; ++i) {
+    float pz = planeDist*nz + planeDist*float(i);
+
+    float pd = (pz - ro.z)/rd.z;
+
+    if (pd > 0.0 && acol.w < cutOff) {
+      vec3 pp = ro + rd*pd;
+      vec3 npp = ro + nrd*pd;
+
+      float aa = 3.0*length(pp - npp);
+
+      vec3 off = offset(pp.z);
+
+      vec4 pcol = plane(ro, rd, pp, off, aa, nz+float(i));
+
+      float nz = pp.z-ro.z;
+      float fadeIn = exp(-2.5*max((nz - planeDist*float(fadeFrom))/fadeDist, 0.0));
+      float fadeOut = smoothstep(0.0, planeDist*0.1, nz);
+      pcol.xyz = mix(skyCol, pcol.xyz, (fadeIn));
+      pcol.w *= fadeOut;
+
+      pcol = clamp(pcol, 0.0, 1.0);
+
+      acol = alphaBlend(pcol, acol);
+    } else {
+      cutOut = true;
+      break;
+    }
+
+  }
+
+  vec3 col = alphaBlend(skyCol, acol);
+// To debug cutouts due to transparency
+//  col += cutOut ? vec3(1.0, -1.0, 0.0) : vec3(0.0);
+  return col;
+}
+
+// Classic post processing
+vec3 postProcess(vec3 col, vec2 q) {
+  col -= 0.5*vec3(0.1, 0.2, 0.);
+  col = clamp(col, 0.0, 1.0);
+  col = sqrt(col);
+  col = col*0.6+0.4*col*col*(3.0-2.0*col);
+  col = mix(col, unit3*(dot(col, unit3*(0.33))), -0.4);
+  col *=(1.0-CORNER_SHADE)+CORNER_SHADE*pow(19.0*q.x*q.y*(1.0-q.x)*(1.0-q.y),0.7);
+  return col;
+}
+
+vec3 effect(vec2 p, vec2 q) {
+  float tm  = 0.05*FLY_SPEED*TIME*2.0;
+  vec3 ro   = offset(tm);
+  vec3 dro  = doffset(tm);
+  vec3 ddro = ddoffset(tm);
+
+  vec3 ww = normalize(dro);
+  vec3 uu = normalize(cross(normalize(vec3(0.0,1.0,0.0)+ddro), ww));
+  vec3 vv = (cross(ww, uu));
+
+  vec3 col = color(ww, uu, vv, ro, p);
+  col = postProcess(col, q);
+  return col;
+}
+
+//
+// PS_OUTPUT ps_main(in PS_INPUT In)
+#if defined(WINDOWS_TERMINAL)
+float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+#else
+float4 ps_main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+#endif
+{
+  vec2 q = tex;
+  vec2 p = -1.0 + 2.0*q;
+#if defined(WINDOWS_TERMINAL)
+  p.y = -p.y;
+#endif
+  p.x *= RESOLUTION.x/RESOLUTION.y;
+  p = finishView(p);
+
+  vec3 col = effect(p, q);
+
+  col = finishGrade(col, q);
+
+  vec4 fg = shaderTexture.Sample(samplerState, q);
+  vec4 sh = shaderTexture.Sample(samplerState, q-2.0*unit2/RESOLUTION.xy);
+  float2 veilStep = 2.0 * Scale / Resolution;
+  float cover = max(fg.w, max(shaderTexture.Sample(samplerState, q + veilStep).w, shaderTexture.Sample(samplerState, q - veilStep).w));
+  col *= 1.0 - TEXT_VEIL * cover;                       // darken behind text so it stays readable
+  col = mix(col, 0.0*unit3, sh.w*TEXT_SHADOW);
+  col = mix(col, fg.xyz, fg.w);
+
+  col += (ditherHash12(q * Resolution) - 0.5) / 255.0;    // dither: hides banding in dark gradients
+  return vec4(col, 1.0);
+}

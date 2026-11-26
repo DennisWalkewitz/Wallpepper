@@ -1,0 +1,78 @@
+Wallpepper 0.3.0 self-test, 2026-11-26 12:44, Intel(R) Iris(R) Xe Graphics, 2 display(s): 1920x1080@60, 1920x1080@60
+wallpaper windows | OK | 2 window(s) in the desktop layer, visible, display-sized
+rendering | OK | frames per display in 1 s: 24+12
+name | result | compiled, frames per display in 1 s, average frame time, distinct colours per display (or what is wrong)
+apollian.hlsl | OK | compiled, frames 12+12, 83.7 ms, colours 2327+2196
+atari.hlsl | OK | compiled, frames 24+24, 42.3 ms, colours 144+144
+aurora-lake.hlsl | OK | compiled, frames 12+12, 84.3 ms, colours 1386+1386
+beach-tide.hlsl | OK | compiled, frames 12+12, 83.9 ms, colours 2202+2202
+blackhole.hlsl | OK | compiled, frames 12+12, 83.5 ms, colours 1070+1070
+breathe.hlsl | OK | compiled, frames 20+20, 50.1 ms, colours 386+386
+cloudface.hlsl | OK | compiled, frames 12+12, 83.9 ms, colours 1023+1023
+complex.hlsl | OK | compiled, frames 15+15, 67.0 ms, colours 655+655
+crt.hlsl | OK | compiled, frames 24+24, 42.0 ms, colours 120+120 (terminal effect: blank without text is expected)
+damask.hlsl | OK | compiled, frames 15+15, 67.0 ms, colours 1621+1621
+dawn.hlsl | OK | compiled, frames 12+12, 84.6 ms, colours 40+40
+decepticon.hlsl | OK | compiled, frames 12+12, 83.5 ms, colours 104+104
+demonstration.hlsl | OK | compiled, frames 25+24, 41.4 ms, colours 23+23 (terminal effect: blank without text is expected)
+drifting-clouds.hlsl | OK | compiled, frames 12+12, 83.5 ms, colours 2145+2145
+fireflies.hlsl | OK | compiled, frames 12+12, 83.7 ms, colours 1566+1566
+flowbeat.wallpepperweb | OK | web page loaded
+forest-light.hlsl | OK | compiled, frames 12+12, 83.7 ms, colours 1938+1938
+gentle-flow.hlsl | OK | compiled, frames 12+12, 84.8 ms, colours 1884+1884
+golden-lattice.hlsl | OK | compiled, frames 24+22, 42.2 ms, colours 1172+1179
+grid.hlsl | OK | compiled, frames 25+25, 40.6 ms, colours 2+2 (terminal effect: blank without text is expected)
+happy.hlsl | OK | compiled, frames 24+24, 42.2 ms, colours 1768+1769
+hardwork.hlsl | OK | compiled, frames 25+22, 40.3 ms, colours 719+742
+hueshift.hlsl | OK | compiled, frames 24+24, 42.4 ms, colours 1+1 (terminal effect: blank without text is expected)
+inside-cpu.hlsl | OK | compiled, frames 24+24, 42.2 ms, colours 1223+1233
+kodelife.hlsl | OK | compiled, frames 25+25, 41.5 ms, colours 2410+2431 (terminal effect: blank without text is expected)
+lava-lamp.hlsl | OK | compiled, frames 24+23, 41.7 ms, colours 1424+1434
+mandala.hlsl | OK | compiled, frames 21+20, 50.6 ms, colours 993+1001
+mandelbrot.hlsl | OK | compiled, frames 25+25, 41.2 ms, colours 934+934
+matrix-rain.hlsl | OK | compiled, frames 25+25, 40.4 ms, colours 884+884
+mm-comets.hlsl | OK | compiled, frames 12+12, 84.6 ms, colours 565+418
+mm-koi.hlsl | OK | compiled, frames 12+12, 84.0 ms, colours 382+374
+mm-pong.hlsl | OK | compiled, frames 24+24, 42.3 ms, colours 5+123
+neonroad.hlsl | OK | compiled, frames 21+21, 48.0 ms, colours 2204+2204
+ocean-dusk.hlsl | OK | compiled, frames 12+12, 84.8 ms, colours 2478+2478
+onnet.hlsl | OK | compiled, frames 24+24, 42.1 ms, colours 579+579
+paint-swirl.hlsl | OK | compiled, frames 24+24, 42.1 ms, colours 739+739
+penteract.hlsl | OK | compiled, frames 12+12, 84.5 ms, colours 935+935
+prism-gem.hlsl | OK | compiled, frames 12+12, 84.4 ms, colours 586+586
+pt-courtyard.hlsl | FAIL | not on screen after 120 s
+pt-still-life.hlsl | FAIL | not on screen after 120 s
+rain-on-glass.hlsl | OK | compiled, frames 13+13, 78.0 ms, colours 906+906
+reactor.hlsl | OK | compiled, frames 20+20, 50.8 ms, colours 1281+1281
+rtx-pathtracer.hlsl | OK | compiled, frames 20+13, 51.3 ms, colours 1976+2005
+silk-flow.hlsl | OK | compiled, frames 25+25, 40.4 ms, colours 2487+2456
+snowfall.hlsl | OK | compiled, frames 24+25, 41.5 ms, colours 832+832
+sphere4.hlsl | OK | compiled, frames 24+24, 41.9 ms, colours 1494+1494
+stars.hlsl | OK | compiled, frames 25+25, 41.2 ms, colours 674+674
+tesseract.hlsl | OK | compiled, frames 12+12, 85.2 ms, colours 791+789
+torus.hlsl | OK | compiled, frames 24+24, 42.3 ms, colours 2187+2187
+transparent.hlsl | OK | compiled, frames 24+24, 41.9 ms, colours 1+1 (terminal effect: blank without text is expected)
+twist.hlsl | OK | compiled, frames 15+15, 68.6 ms, colours 1030+1046
+underwater.hlsl | OK | compiled, frames 13+13, 78.6 ms, colours 2143+2143
+velvet-swirl.hlsl | OK | compiled, frames 24+24, 41.7 ms, colours 468+481
+wind.hlsl | OK | compiled, frames 12+12, 84.0 ms, colours 2250+2243
+zen-garden.hlsl | OK | compiled, frames 12+12, 84.1 ms, colours 723+723
+zen-ripples.hlsl | OK | compiled, frames 24+24, 41.8 ms, colours 1561+1538
+lock, set a wallpaper while locked, unlock | OK | frames while locked 0+0, drawn for the wallpaper set while locked 1+1, then paused again 0+0, in 1 s after unlock 21+21
+graphics device lost | OK | frames in 1 s after the rebuild 14+14
+wallpaper windows destroyed from outside | OK | frames in 1 s after re-attaching 19+20
+budget Low, light: velvet-swirl.hlsl | OK | 85% at 30 fps, 85% at 30 fps, stored cost 2.79 ms per 1080p frame, GPU measured 15.5% (planned 12.1%) of 15% allowed, plan changes in 20 s: 0, frames 592+592
+budget Low, medium: cloudface.hlsl | OK | 50% at 24 fps, 50% at 24 fps, stored cost 9.22 ms per 1080p frame, GPU measured 24.8% (planned 11.1%) of 15% allowed, plan changes in 20 s: 0, frames 477+477
+budget Low, heavy: rtx-pathtracer.hlsl | OK | 45% at 12 fps, 45% at 12 fps, stored cost 23.42 ms per 1080p frame, GPU measured 21.3% (planned 11.4%) of 15% allowed, plan changes in 20 s: 0, frames 237+237, light settings
+memory, tray only: private 109 MB, working set 157 MB, managed 8 MB, handles 758, GDI 11, USER 24
+memory, library open (pictures ready after 3.0 s): private 182 MB, working set 256 MB, managed 20 MB, handles 966, GDI 39, USER 69
+memory, after 50 selections: private 209 MB, working set 292 MB, managed 15 MB, handles 1003, GDI 41, USER 53
+memory, after 100 selections: private 210 MB, working set 292 MB, managed 24 MB, handles 994, GDI 41, USER 49
+browse: window stays responsive (100 selections, drifting-clouds.hlsl live) | FAIL | an input waits for the UI thread: median 1.1 ms, 95% 31.8 ms, max 470.2 ms, over 50 ms 22 of 1617; longest during selection 11 (mm-pong.hlsl)
+browse: preview follows the selection | OK | selection to first preview frame, compiled shader: median 28 ms, 95% 77 ms, max 432 ms (98 selections); shader that had to be compiled first (progress shown meanwhile): median 2531 ms, max 2531 ms (2 selections)
+browse: wallpaper keeps its frame rate | OK | 24.8+24.8 fps of 24+24 wanted, longest gap between two frames 49 ms
+browse: memory and handles stay flat | OK | from selection 50 to 100: private bytes +1 MB, handles -9
+memory, library closed again: private 175 MB, working set 253 MB, managed 8 MB, handles 682, GDI 35, USER 42
+status | OK | Rendering on 2 displays · resource use Low
+
+SUMMARY: 66 passed, 3 failed

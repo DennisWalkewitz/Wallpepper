@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms is used only for NotifyIcon, Screen and the NativeWindow wallpaper/message windows -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>Wallpepper</AssemblyName>
+    <RootNamespace>Wallpepper</RootNamespace>
+    <Product>Wallpepper</Product>
+    <AssemblyTitle>Wallpepper</AssemblyTitle>
+    <Description>Animated shader wallpapers</Description>
+    <Version>0.3.0</Version>
+    <Copyright>Copyright (c) Dennis Walkewitz. MIT licence.</Copyright>
+
+    <!-- small + lean: framework-dependent single file, precompiled (no JIT warm-up), workstation non-concurrent GC -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- WebView2Loader.dll (the only native dependency) travels inside the exe -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <PublishDocumentationFiles>false</PublishDocumentationFiles>
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- WinForms analyzers that do not apply: WFO0003 and WFAC010 want the DPI mode in the project file, but it is declared in
+         app.manifest because the app has its own Main; WFO1000 is about designer serialisation, and there is no designer -->
+    <NoWarn>WFO0003;WFAC010;WFO1000</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- bundled library (shaders and web wallpapers), seeded into the library folder on first run -->
+    <EmbeddedResource Include="..\shaders\*.hlsl;..\shaders\*.wallpepperweb;..\shaders\*.txt" LogicalName="shaders/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="app.ico" LogicalName="app.ico" />
+    <!-- the app's own two shaders: the full-screen triangle and the filter pass -->
+    <EmbeddedResource Include="Rendering\Shaders\*.hlsl" LogicalName="hlsl/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- the unit tests are a project of their own -->
+    <Compile Remove="tests\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+    <!-- only loaded when a web wallpaper is in use -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3179.45" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,135 @@
+// @name: Breathe
+// @tags: meditative, calming, featured
+// A breathing guide: the orb grows while you breathe in, rests, and shrinks while you breathe out.
+// The timing of all four phases is adjustable (default 4-2-6-2 seconds). Soft rings ripple outwards on the
+// out-breath, dust drifts with the breath, and a thin arc shows where you are in the cycle.
+
+Texture2D shaderTexture;
+SamplerState samplerState;
+cbuffer PixelShaderSettings {
+    float  Time;
+    float  Scale;
+    float2 Resolution;
+    float4 Background;
+};
+
+#define INHALE 4.0            // seconds breathing in
+#define HOLD_IN 2.0           // seconds holding after the in-breath
+#define EXHALE 6.0            // seconds breathing out
+#define HOLD_OUT 2.0          // seconds resting after the out-breath
+#define ORB_SIZE 1.0          // size of the orb
+#define ORB_SOFTNESS 1.0      // how soft the edge of the orb is
+#define RINGS 4               // ripple rings around the orb (0..8)
+#define RING_SPREAD 1.0       // how far the rings travel
+#define PROGRESS_ARC 1        // 1 = thin arc showing the position in the cycle
+#define DUST 1.0              // drifting specks of light
+#define AURA 1.0              // glow around the orb
+#define POS_X 0.5             // orb position, 0..1 of width
+#define POS_Y 0.5             // orb position, 0..1 of height
+#define IN_R 0.25             // colour while breathing in: red
+#define IN_G 0.75             // colour while breathing in: green
+#define IN_B 0.85             // colour while breathing in: blue
+#define OUT_R 0.95            // colour while breathing out: red
+#define OUT_G 0.55            // colour while breathing out: green
+#define OUT_B 0.60            // colour while breathing out: blue
+#define BACK_R 0.020          // background colour: red
+#define BACK_G 0.030          // background colour: green
+#define BACK_B 0.060          // background colour: blue
+#define BRIGHTNESS 1.0        // overall brightness
+#define TEXT_VEIL 0.5         // darkening behind terminal text
+
+float hash12(float2 p)
+{
+    float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+
+float vnoise(float2 p)
+{
+    float2 i = floor(p), f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(hash12(i), hash12(i + float2(1.0, 0.0)), f.x), lerp(hash12(i + float2(0.0, 1.0)), hash12(i + float2(1.0, 1.0)), f.x), f.y);
+}
+
+float ease(float x) { return 0.5 - 0.5 * cos(saturate(x) * 3.14159265); }
+
+float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+{
+    float aspect = Resolution.x / Resolution.y;
+    float2 p = float2((tex.x - POS_X) * aspect, tex.y - POS_Y);
+    float r = length(p);
+    float ang = atan2(p.y, p.x);
+
+    // where are we in the breath?  level: 0 = empty, 1 = full.  mood: 0 = in-breath colour, 1 = out-breath colour
+    float total = max(INHALE + HOLD_IN + EXHALE + HOLD_OUT, 0.5);
+    float tc = Time - total * floor(Time / total);
+    float level, mood;
+    if (tc < INHALE) { level = ease(tc / max(INHALE, 0.01)); mood = 0.0; }
+    else if (tc < INHALE + HOLD_IN) { level = 1.0; mood = ease((tc - INHALE) / max(HOLD_IN, 0.01)) * 0.5; }
+    else if (tc < INHALE + HOLD_IN + EXHALE) { level = 1.0 - ease((tc - INHALE - HOLD_IN) / max(EXHALE, 0.01)); mood = 0.5 + 0.5 * saturate((tc - INHALE - HOLD_IN) / max(EXHALE, 0.01) * 3.0); }
+    else { level = 0.0; mood = 1.0 - ease((tc - INHALE - HOLD_IN - EXHALE) / max(HOLD_OUT, 0.01)); }
+    float outPhase = saturate((tc - INHALE - HOLD_IN) / max(EXHALE + HOLD_OUT, 0.01));   // 0..1 across the out-breath
+
+    float3 inC = float3(IN_R, IN_G, IN_B);
+    float3 outC = float3(OUT_R, OUT_G, OUT_B);
+    float3 tint = lerp(inC, outC, mood);
+    float3 back = float3(BACK_R, BACK_G, BACK_B);
+
+    // background: quiet gradient with a slow haze that leans towards the breath colour
+    float haze = vnoise(p * 1.6 + float2(Time * 0.010, 0.0)) * vnoise(p * 3.1 - float2(0.0, Time * 0.008));
+    float3 col = back * (1.0 + 0.6 * (0.5 - tex.y)) + tint * haze * 0.06 + tint * 0.05 * exp(-r * 2.2) * (0.5 + level);
+
+    // the orb: soft body, brighter core, a rim that catches light, faint slow swirl inside
+    float R = (0.085 + 0.135 * level) * ORB_SIZE;
+    float soft = 0.012 + 0.03 * ORB_SOFTNESS;
+    float body = 1.0 - smoothstep(R - soft, R + soft, r + 0.004 * sin(ang * 5.0 + Time * 0.4) * level);
+    float inner = saturate(1.0 - r / max(R, 1e-4));
+    float swirl = vnoise(float2(ang * 1.5 + Time * 0.05, r * 14.0 - Time * 0.08));
+    float3 orb = tint * (0.30 + 0.55 * pow(inner, 0.6) + 0.25 * swirl * inner) + float3(1.0, 1.0, 1.0) * pow(inner, 3.0) * 0.35;
+    orb += tint * pow(1.0 - inner, 6.0) * 0.6;                               // rim light
+    col = lerp(col, orb, body * 0.95);
+    col += tint * exp(-max(r - R, 0.0) * (9.0 - 4.0 * level)) * 0.33 * AURA * (0.5 + 0.5 * level) * (1.0 - body);
+
+    // rings leave the orb during the out-breath and fade as they travel
+    for (int i = 0; i < RINGS; i++)
+    {
+        float fi = float(i) / max(float(RINGS), 1.0);
+        float prog = saturate(outPhase * 1.4 - fi * 0.4);
+        float rr = R + prog * (0.10 + 0.28 * RING_SPREAD) * (0.6 + fi);
+        float ring = exp(-pow((r - rr) * 110.0, 2.0)) * prog * (1.0 - prog) * 4.0;
+        col += tint * ring * 0.22 * step(INHALE + HOLD_IN, tc);
+    }
+
+    // progress arc: a thin circle that fills clockwise once per breath
+    if (PROGRESS_ARC > 0)
+    {
+        float ra = 0.275 * ORB_SIZE;
+        float stroke = exp(-pow((r - ra) * 380.0, 2.0));
+        float a01 = frac(ang / 6.2831853 + 0.25);                            // 0 at the top, clockwise
+        float done = 1.0 - smoothstep(tc / total - 0.004, tc / total + 0.004, a01);
+        col += (tint * done * 0.55 + float3(1.0, 1.0, 1.0) * 0.035) * stroke;
+        float2 hp = float2(sin(tc / total * 6.2831853), -cos(tc / total * 6.2831853)) * ra;
+        col += tint * exp(-length(p - hp) * 260.0) * 1.2;                    // the moving dot
+    }
+
+    // dust: specks that drift inwards on the in-breath and outwards on the out-breath
+    float2 dp = p * (1.0 - 0.10 * (level - 0.5)) * 13.0 + float2(Time * 0.02, Time * 0.013);
+    float2 did = floor(dp);
+    float2 dpos = float2(hash12(did), hash12(did + 5.0)) * 0.7 + 0.15;
+    float tw = 0.5 + 0.5 * sin(Time * (0.3 + hash12(did + 9.0)) + hash12(did) * 40.0);
+    col += tint * (1.0 - smoothstep(0.0, 0.045, length(frac(dp) - dpos))) * step(0.78, hash12(did + 2.0)) * tw * 0.35 * DUST;
+
+    col *= BRIGHTNESS;
+    col = 1.0 - exp(-col * 1.5);
+    float2 vc = tex - 0.5;
+    col *= 1.0 - dot(vc, vc) * 0.7;
+
+    float4 fg = shaderTexture.Sample(samplerState, tex);
+    float2 o = 2.0 * Scale / Resolution;
+    float cover = max(fg.a, max(shaderTexture.Sample(samplerState, tex + o).a, shaderTexture.Sample(samplerState, tex - o).a));
+    col *= 1.0 - TEXT_VEIL * cover;
+    col = col * (1.0 - fg.a) + fg.rgb;
+    col += (hash12(tex * Resolution) - 0.5) / 255.0;
+    return float4(saturate(col), 1.0);
+}

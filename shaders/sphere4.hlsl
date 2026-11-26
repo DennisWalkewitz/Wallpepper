@@ -1,0 +1,381 @@
+// @name: Sphere 4
+// @tags: abstract
+// A dark, mirror-polished rounded cube tumbles between a floor and a ceiling of glowing green grid lines;
+// soft blobs of light wander through the grid and everything is reflected in the cube.
+#define WINDOWS_TERMINAL
+
+Texture2D shaderTexture;
+SamplerState samplerState;
+
+// --------------------
+#if defined(WINDOWS_TERMINAL)
+cbuffer PixelShaderSettings {
+  float  Time;
+  float  Scale;
+  float2 Resolution;
+  float4 Background;
+};
+
+#define TIME        (Time*SPEED)
+#define RESOLUTION  Resolution
+#else
+float time;
+float2 resolution;
+
+#define TIME        time
+#define RESOLUTION  resolution
+#endif
+// --------------------
+
+// ---- Wallpepper settings: every number below is a control in the app ----
+#define TUMBLE_SPEED 0.3      // how fast the cube tumbles, negative = the other way (-3..3)
+#define SIZE 3.0              // size of the cube (1..4.5)
+#define POLISH 0.125          // how mirror-like the faces looking at you are: 1 = a perfect mirror all over (0..1)
+#define FLOOR_SPEED 0.3       // how fast the grid slides past, negative = backwards (-3..3)
+#define GRID_SCALE 0.25       // how fine the grid is: higher = smaller squares (0.08..1)
+#define FLOOR_GLOW 1.5        // brightness of the grid lines (0..5)
+#define FLOOR_FADE 0.1        // how quickly the grid fades into the distance (0.04..0.5)
+#define FLOOR_HUE 0.4         // colour of the grid, as a position on the colour wheel (0..1)
+#define PULSE_HUE 0.15        // how far the colour shifts in the dim patches that wander over the grid (0..1)
+#define PULSE_SPEED 1.0       // how fast those patches wander (0..6)
+#define BLOBS 5               // number of blobs of light wandering through each grid square (2..8)
+#define BLOB_SPEED 1.0        // how fast the blobs wander (0..6)
+#define DOTS 1                // 1 = a dot on every grid crossing, 0 = no dots
+#define CEILING_LIGHT 1.0     // brightness of the light panel above (0..4)
+#define HORIZON_GLOW 1.0      // brightness of the line of light on the horizon (0..20)
+#define CAMERA_HEIGHT 3.0     // height of the camera, between floor and ceiling (-3..5)
+#define CAMERA_DISTANCE 7.0   // distance of the camera from the cube (5.5..16)
+#define GLOW_R 0.4            // colour of the room light and the horizon: red
+#define GLOW_G 1.0            // colour of the room light and the horizon: green
+#define GLOW_B 0.64           // colour of the room light and the horizon: blue
+// ---- picture, colour and text: these work the same in every wallpaper of the Hammster / mrange collection ----
+#define SPEED 1.0             // time scale of everything: 0 = frozen, 2 = twice as fast (0..4)
+#define ZOOM 1.0              // magnify the picture: below 1 = wider view, above 1 = closer (0.25..4)
+#define OFFSET_X 0.0          // shift the picture sideways (-1..1)
+#define OFFSET_Y 0.0          // shift the picture up or down (-1..1)
+#define ROTATION 0.0          // turn the whole picture clockwise, in degrees (-180..180)
+#define SPIN 0.0              // keep turning the whole picture: clockwise turns per minute, negative = anticlockwise (-6..6)
+#define MIRROR 0              // 1 = kaleidoscope: the picture is mirrored into equal slices around the centre
+#define MIRROR_SEGMENTS 6     // number of kaleidoscope slices when MIRROR is on; 1 = plain left-right mirror (1..16)
+#define HUE_SHIFT 0.0         // rotate all colours around the colour wheel (0..1)
+#define HUE_CYCLE 0.0         // keep rotating the colours: full turns per minute (-6..6)
+#define SATURATION 1.0        // 0 = grey, 1 = original, 2 = vivid (0..2)
+#define CONTRAST 1.0          // below 1 = flatter, above 1 = punchier (0.2..2.5)
+#define BRIGHTNESS 1.0        // overall brightness (0.2..3)
+#define TINT_R 1.0            // colour multiplied over the picture, white = unchanged: red
+#define TINT_G 1.0            // colour multiplied over the picture, white = unchanged: green
+#define TINT_B 1.0            // colour multiplied over the picture, white = unchanged: blue
+#define VIGNETTE 0.0          // extra darkening towards the corners (0..1.5)
+#define TEXT_VEIL 0.4         // darkening behind terminal text so it stays readable (0..1)
+#define TEXT_SHADOW 1.0       // strength of the drop shadow under terminal text (0..1)
+
+// ---- finishing helpers (identical in every wallpaper of this collection) ----
+// Where a screen position looks in the original picture: rotation, kaleidoscope, zoom and shift.
+// Only the generated picture goes through this, never the terminal text.
+float2 finishView(float2 p)
+{
+    float ang = ROTATION * 0.017453293 + SPIN * TIME * 0.104719755;
+    float viewCos = cos(ang), viewSin = sin(ang);
+    p = float2(viewCos * p.x - viewSin * p.y, viewSin * p.x + viewCos * p.y);
+    if (MIRROR > 0)
+    {
+        float seg = 3.141592654 / max(float(MIRROR_SEGMENTS), 1.0);
+        float a = atan2(p.x, p.y + 1e-7);
+        a = abs(a - 2.0 * seg * floor(a / (2.0 * seg) + 0.5));
+        p = length(p) * float2(sin(a), cos(a));
+    }
+    return p / max(ZOOM, 0.01) - float2(OFFSET_X, OFFSET_Y);
+}
+
+// Hue, saturation, contrast, brightness, tint and vignette of the finished picture (uv = 0..1 across the screen).
+float3 finishGrade(float3 col, float2 uv)
+{
+    float turn = (HUE_SHIFT + HUE_CYCLE * TIME / 60.0) * 6.2831853;
+    float hueCos = cos(turn), hueSin = sin(turn);
+    float3 axis = float3(0.57735027, 0.57735027, 0.57735027);
+    col = col * hueCos + cross(axis, col) * hueSin + axis * dot(axis, col) * (1.0 - hueCos);
+    float grey = dot(col, float3(0.299, 0.587, 0.114));
+    col = col * SATURATION + grey * (1.0 - SATURATION);
+    col = col * CONTRAST + 0.5 * (1.0 - CONTRAST);
+    col *= BRIGHTNESS * float3(TINT_R, TINT_G, TINT_B);
+    float2 corner = uv - 0.5;
+    col *= saturate(1.0 - dot(corner, corner) * VIGNETTE * 2.0);
+    return col;
+}
+
+float ditherHash12(float2 p)
+{
+    float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+// --------------------
+
+
+// --------------------
+// GLSL => HLSL adapters
+#define vec2  float2
+#define vec3  float3
+#define vec4  float4
+#define mat3  float3x3
+#define fract frac
+#define mix   lerp
+vec2 mod(vec2 x, vec2 y) {
+  return x - y * floor(x/y);
+}
+
+static const vec2 unit2 = vec2(1.0, 1.0);
+static const vec3 unit3 = vec3(1.0, 1.0, 1.0);
+// --------------------
+
+#define PI      3.141592654
+#define TAU     (2.0*PI)
+
+// License: WTFPL, author: sam hocevar, found: https://stackoverflow.com/a/17897228/418488
+static const vec4 hsv2rgb_K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+vec3 hsv2rgb(vec3 c) {
+  vec3 p = abs(fract(c.xxx + hsv2rgb_K.xyz) * 6.0 - hsv2rgb_K.www);
+  return c.z * mix(hsv2rgb_K.xxx, clamp(p - hsv2rgb_K.xxx, 0.0, 1.0), c.y);
+}
+#define HSV2RGB(c)  (c.z * mix(hsv2rgb_K.xxx, clamp(abs(fract(c.xxx + hsv2rgb_K.xyz) * 6.0 - hsv2rgb_K.www) - hsv2rgb_K.xxx, 0.0, 1.0), c.y))
+
+static const vec3 gcol = vec3(GLOW_R, GLOW_G, GLOW_B);
+static const float fov = tan(TAU/6.0);
+
+// License: Unknown, author: Unknown, found: don't remember
+float tanh_approx(float x) {
+//  return tanh(x);
+  float x2 = x*x;
+  return clamp(x*(27.0 + x2)/(27.0+9.0*x2), -1.0, 1.0);
+}
+
+float3x3 rot_z(float a) {
+  float c = cos(a);
+  float s = sin(a);
+  return mat3(
+      c,s,0
+    ,-s,c,0
+    , 0,0,1
+    );
+}
+
+mat3 rot_y(float a) {
+  float c = cos(a);
+  float s = sin(a);
+  return mat3(
+      c,0,s
+    , 0,1,0
+    ,-s,0,c
+    );
+}
+
+mat3 rot_x(float a) {
+  float c = cos(a);
+  float s = sin(a);
+  return mat3(
+      1, 0,0
+    , 0, c,s
+    , 0,-s,c
+    );
+}
+
+float circle(vec2 p, float r) {
+  return length(p) - r;
+}
+
+// License: MIT, author: Inigo Quilez, found: https://iquilezles.org/articles/distfunctions2d
+float box(vec2 p, vec2 b) {
+  vec2 d = abs(p)-b;
+  return length(max(d,0.0)) + min(max(d.x,d.y),0.0);
+}
+
+// License: MIT, author: Inigo Quilez, found: https://iquilezles.org/articles/smin
+float pmin(float a, float b, float k) {
+    float h = clamp( 0.5+0.5*(b-a)/k, 0.0, 1.0 );
+    return mix( b, a, h ) - k*h*(1.0-h);
+}
+
+// http://mercury.sexy/hg_sdf/
+vec2 mod2(inout vec2 p, vec2 size) {
+  vec2 c = floor((p + size*0.5)/size);
+  p = mod(p + size*0.5, size) - size*0.5;
+  return c;
+}
+
+// License: MIT, author: Inigo Quilez, found: https://iquilezles.org/articles/intersectors
+float rayPlane(vec3 ro, vec3 rd, vec4 p) {
+  return -(dot(ro,p.xyz)+p.w)/dot(rd,p.xyz);
+}
+
+// License: MIT, author: Inigo Quilez, found: https://iquilezles.org/articles/intersectors
+float raySphere4(vec3 ro, vec3 rd, float ra) {
+  float r2 = ra*ra;
+  vec3 d2 = rd*rd; vec3 d3 = d2*rd;
+  vec3 o2 = ro*ro; vec3 o3 = o2*ro;
+  float ka = 1.0/dot(d2,d2);
+  float k3 = ka* dot(ro,d3);
+  float k2 = ka* dot(o2,d2);
+  float k1 = ka* dot(o3,rd);
+  float k0 = ka*(dot(o2,o2) - r2*r2);
+  float c2 = k2 - k3*k3;
+  float c1 = k1 + 2.0*k3*k3*k3 - 3.0*k3*k2;
+  float c0 = k0 - 3.0*k3*k3*k3*k3 + 6.0*k3*k3*k2 - 4.0*k3*k1;
+  float p = c2*c2 + c0/3.0;
+  float q = c2*c2*c2 - c2*c0 + c1*c1;
+  float h = q*q - p*p*p;
+  if( h<0.0 ) return -1.0; //no intersection
+  float sh = sqrt(h);
+  float s = sign(q+sh)*pow(abs(q+sh),1.0/3.0); // cuberoot
+  float t = sign(q-sh)*pow(abs(q-sh),1.0/3.0); // cuberoot
+  vec2  w = vec2( s+t,s-t );
+  vec2  v = vec2( w.x+c2*4.0, w.y*sqrt(3.0) )*0.5;
+  float r = length(v);
+  return -abs(v.y)/sqrt(r+v.x) - c1/r - k3;
+}
+
+// License: MIT, author: Inigo Quilez, found: https://iquilezles.org/articles/intersectors
+vec3 normalSphere4(in vec3 pos) {
+  return normalize(pos*pos*pos);
+}
+
+float blobs(vec2 p) {
+  // Generates a grid of dots
+  vec2 bp = p;
+  vec2 bn = mod2(bp, 3.0*unit2);
+
+  vec2 dp = p;
+  vec2 dn = mod2(dp, 0.25*unit2);
+  float ddots = length(dp);
+
+  // Blobs
+  float dblobs = 1E6;
+  for (int i = 0; i < BLOBS; ++i) {
+    float dd = circle(bp-1.0*vec2(sin(TIME*BLOB_SPEED+float(i)), sin(float(i*i)+TIME*BLOB_SPEED*sqrt(0.5))), 0.1);
+    dblobs = pmin(dblobs, dd, 0.35);
+  }
+
+  float d = 1E6;
+  if (DOTS > 0) d = min(d, ddots);
+  // Smooth min between blobs and dots makes it look somewhat amoeba like
+  d = pmin(d, dblobs, 0.35);
+  return d;
+}
+
+vec3 skyColor(vec3 ro, vec3 rd) {
+  vec3 col = clamp(0.00125*HORIZON_GLOW/abs(rd.y)*gcol, 0.0, 10.0)*unit3;
+
+  float tp0  = rayPlane(ro, rd, vec4(vec3(0.0, 1.0, 0.0), 4.0));
+  float tp1  = rayPlane(ro, rd, vec4(vec3(0.0, -1.0, 0.0), 6.0));
+
+  float tp = tp1;
+  tp = max(tp0,tp1);
+  if (tp > 0.0) {
+    vec3 pos  = ro + tp*rd;
+    vec3 tpos = pos+vec3(0.0, 0.0, 2.0*TIME*FLOOR_SPEED);
+    const float fz = GRID_SCALE;
+    const float bz = 1.0/fz;
+    vec2 bpos = tpos.xz/bz;
+    float db = blobs(bpos)*bz;
+    db = abs(db);
+    vec2 pp = tpos.xz*fz;
+    float m = 0.5+0.25*(sin(3.0*pp.x+TIME*2.1*PULSE_SPEED)+sin(3.3*pp.y+TIME*2.0*PULSE_SPEED));
+    m *= m;
+    m *= m;
+    pp = fract(pp+0.5)-0.5;
+    float dp = pmin(abs(pp.x), abs(pp.y), 0.125);
+    dp = min(dp, db);
+    vec3 hsv = vec3(FLOOR_HUE+mix(PULSE_HUE,0.0, m), tanh_approx(mix(50.0, 10.0, m)*dp), 1.0);
+    vec3 pcol = FLOOR_GLOW*hsv2rgb(hsv)*exp(-mix(30.0, 10.0, m)*dp);
+
+    float f = 1.0-tanh_approx(FLOOR_FADE*length(pos.xz));
+    col = mix(col, pcol , f);
+  }
+
+
+  if (tp1 > 0.0) {
+    vec3 pos  = ro + tp1*rd;
+    vec2 pp = pos.xz;
+    float db = box(pp, vec2(6.0, 9.0))-1.0;
+
+    col += 2.0*unit3*gcol*rd.y*smoothstep(0.25, 0.0, db)*CEILING_LIGHT;
+    col += 0.8*unit3*gcol*exp(-0.5*max(db, 0.0))*CEILING_LIGHT;
+  }
+
+
+  return col;
+}
+
+vec3 color(vec3 ro, vec3 rd) {
+  vec3 skyCol = skyColor(ro, rd);
+  mat3 rot = rot_x(TUMBLE_SPEED*0.25*TIME);
+  rot = mul(rot,rot_y(TUMBLE_SPEED*0.33*TIME));
+  rot = mul(rot,rot_z(TUMBLE_SPEED*0.45*TIME));
+  mat3 irot = transpose(rot);
+
+  vec3 bro = mul(rot, ro);
+  vec3 brd = mul(rot, rd);
+
+  float bi = raySphere4(bro, brd, SIZE);
+
+  if (bi > -1.0) {
+
+    vec3 bp = bro + bi*brd;
+    vec3 bn = normalSphere4(bp);
+    vec3 p = mul(irot, bp);
+    vec3 n = mul(irot, bn);
+    vec3 r = reflect(rd, n);
+    float bf = 1.0+dot(rd,n);
+    float fre = bf;
+    fre *= fre;
+    vec3 rsky = skyColor(p, r);
+    vec3 col = mix(POLISH, 1.0, fre)*rsky;
+    float rdif = dot(-rd, n);
+    rdif *= rdif;
+    col += 0.25*mix(0.0125, 0.05, rdif)*unit3;
+    return mix(skyCol, col, smoothstep(1.0, 0.85, bf));
+  }
+
+  return skyCol;
+}
+
+//
+// PS_OUTPUT ps_main(in PS_INPUT In)
+#if defined(WINDOWS_TERMINAL)
+float4 main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+#else
+float4 ps_main(float4 pos : SV_POSITION, float2 tex : TEXCOORD) : SV_TARGET
+#endif
+{
+  vec2 q = tex;
+  vec2 p = -1.0 + 2.0*q;
+#if defined(WINDOWS_TERMINAL)
+  p.y = -p.y;
+#endif
+  p.x *= RESOLUTION.x/RESOLUTION.y;
+  p = finishView(p);
+
+  const vec3 ro = vec3(0.0, CAMERA_HEIGHT, CAMERA_DISTANCE);
+  const vec3 la = vec3(0.0, 0.0, 0.0);
+  const vec3 up = vec3(0.0, 1.0, 0.0);
+
+  vec3 ww = normalize(la - ro);
+  vec3 uu = normalize(cross(up, ww));
+  vec3 vv = cross(ww,uu);
+  vec3 rd = normalize(-p.x*uu + p.y*vv + fov*ww);
+
+  vec3 col = color(ro, rd);
+  col = sqrt(col); // Cheap "sRGB"
+
+  col = finishGrade(col, q);
+
+  vec4 fg = shaderTexture.Sample(samplerState, q);
+  vec4 sh = shaderTexture.Sample(samplerState, q-2.0*unit2/RESOLUTION.xy);
+  float2 veilStep = 2.0 * Scale / Resolution;
+  float cover = max(fg.w, max(shaderTexture.Sample(samplerState, q + veilStep).w, shaderTexture.Sample(samplerState, q - veilStep).w));
+  col *= 1.0 - TEXT_VEIL * cover;                       // darken behind text so it stays readable
+  col = mix(col, 0.0*unit3, sh.w*TEXT_SHADOW);
+  col = mix(col, fg.xyz, fg.w);
+
+  col += (ditherHash12(q * Resolution) - 0.5) / 255.0;    // dither: hides banding in dark gradients
+  return vec4(col, 1.0);
+}
